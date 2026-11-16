@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>最後一夜</title>
+    <style>
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background: #14161c;
+        color: #e8e6df;
+        font-family: system-ui, 'Noto Sans TC', 'Microsoft JhengHei', sans-serif;
+      }
+      main { max-width: 832px; margin: 0 auto; padding: 12px 16px 24px; }
+      h1 { font-size: 20px; margin: 4px 0 8px; }
+      .hud { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; margin-bottom: 8px; }
+      .hud .spacer { flex: 1; }
+      button {
+        background: #2a2e3a; color: inherit; border: 1px solid #454b5c; border-radius: 6px;
+        padding: 6px 10px; font: inherit; cursor: pointer;
+      }
+      button:hover { background: #353a49; }
+      .stage { position: relative; }
+      canvas { display: block; width: 100%; height: auto; border-radius: 6px; touch-action: none; cursor: pointer; }
+      #roster { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+      .unit.sel { border-color: #fff; background: #3d4458; }
+      .unit.dead { opacity: 0.45; cursor: default; }
+      #overlay {
+        position: absolute; inset: 0; display: flex; flex-direction: column; gap: 16px;
+        align-items: center; justify-content: center; text-align: center; padding: 16px;
+        background: #000b; border-radius: 6px; font-size: 18px;
+      }
+      #overlay[hidden] { display: none; }
+      .help { color: #a9a79f; font-size: 14px; line-height: 1.6; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>最後一夜</h1>
+      <div class="hud">
+        <span id="time"></span>
+        <span id="bell"></span>
+        <span id="kills"></span>
+        <span class="spacer"></span>
+        <button id="pause"></button>
+        <button id="speed"></button>
+        <button id="restart">重新開始</button>
+      </div>
+      <div class="stage">
+        <canvas id="game"></canvas>
+        <div id="overlay" hidden>
+          <div id="result"></div>
+          <button id="again">再守一夜</button>
+        </div>
+      </div>
+      <div id="roster"></div>
+      <p class="help">
+        點選鎮民（或按數字鍵 1 到 4），再點地面下令移動。鎮民會自動攻擊射程內的敵人，民兵會追擊駐守點附近的敵人。
+        空白鍵暫停，暫停時仍可下令。守住鐘樓直到黎明。
+      </p>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
