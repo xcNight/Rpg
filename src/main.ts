@@ -18,13 +18,17 @@ const btnPause = $('pause');
 const btnSpeed = $('speed');
 
 let game: Game = createGame(Date.now());
-let selected: number | null = null;
+// 預設選取第一位鎮民，手機上不用先點一次才能下令
+let selected: number | null = game.villagers[0].id;
+// 點擊目的地的短暫標記，讓觸控時看得出命令有生效
+let marker: { x: number; y: number; ttl: number } | null = null;
 let paused = false;
 let speed = 1;
 
 function restart() {
   game = createGame(Date.now());
-  selected = null;
+  selected = game.villagers[0].id;
+  marker = null;
   paused = false;
   elOverlay.hidden = true;
   syncButtons();
@@ -45,10 +49,25 @@ canvas.addEventListener('pointerdown', (ev) => {
   const rect = canvas.getBoundingClientRect();
   const x = ((ev.clientX - rect.left) / rect.width) * W;
   const y = ((ev.clientY - rect.top) / rect.height) * H;
-  // 點到鎮民就選取，否則命令已選取的鎮民移動
-  const hit = game.villagers.find((v) => v.alive && Math.hypot(v.x - x, v.y - y) < 0.6);
-  if (hit) selected = hit.id;
-  else if (selected !== null) orderMove(game, selected, Math.floor(x), Math.floor(y));
+  ev.preventDefault();
+  // 手指比滑鼠粗，觸控時放寬判定範圍；點到鎮民就選取（取最近的），否則命令已選取的鎮民移動
+  const reach = ev.pointerType === 'mouse' ? 0.6 : 1.0;
+  let hit: Game['villagers'][number] | null = null;
+  let best = reach;
+  for (const v of game.villagers) {
+    const d = Math.hypot(v.x - x, v.y - y);
+    if (v.alive && d < best) {
+      hit = v;
+      best = d;
+    }
+  }
+  if (hit) {
+    selected = hit.id;
+  } else if (selected !== null) {
+    const tx = Math.floor(x);
+    const ty = Math.floor(y);
+    if (orderMove(game, selected, tx, ty)) marker = { x: tx + 0.5, y: ty + 0.5, ttl: 0.6 };
+  }
 });
 
 window.addEventListener('keydown', (ev) => {
@@ -101,6 +120,19 @@ function frame(now: number) {
   last = now;
   if (!paused) update(game, dt * speed);
   render(ctx, game, selected);
+  if (marker) {
+    marker.ttl -= dt;
+    if (marker.ttl <= 0) marker = null;
+    else {
+      const k = marker.ttl / 0.6;
+      ctx.strokeStyle = `rgba(255,255,255,${k})`;
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(marker.x * TILE, marker.y * TILE, 8 + (1 - k) * 14, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.lineWidth = 1;
+    }
+  }
   hudTimer -= dt;
   if (hudTimer <= 0) {
     updateHud();

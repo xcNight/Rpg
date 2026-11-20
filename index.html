@@ -2,37 +2,99 @@
 <html lang="zh-Hant">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#14161c" />
     <title>最後一夜</title>
     <style>
-      * { box-sizing: border-box; }
+      :root {
+        --bg: #f2efe8;
+        --fg: #23211c;
+        --muted: #6a665c;
+        --btn: #e2ded2;
+        --btn-hover: #d6d1c3;
+        --btn-border: #b9b3a1;
+        --sel: #fff7d6;
+        --veil: rgba(20, 22, 28, 0.82);
+        --veil-fg: #f2efe8;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root:not([data-theme='light']) {
+          --bg: #14161c;
+          --fg: #e8e6df;
+          --muted: #a9a79f;
+          --btn: #2a2e3a;
+          --btn-hover: #353a49;
+          --btn-border: #454b5c;
+          --sel: #3d4458;
+        }
+      }
+      :root[data-theme='dark'] {
+        --bg: #14161c;
+        --fg: #e8e6df;
+        --muted: #a9a79f;
+        --btn: #2a2e3a;
+        --btn-hover: #353a49;
+        --btn-border: #454b5c;
+        --sel: #3d4458;
+      }
+      * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+      html { -webkit-text-size-adjust: 100%; }
       body {
         margin: 0;
-        background: #14161c;
-        color: #e8e6df;
+        background: var(--bg);
+        color: var(--fg);
         font-family: system-ui, 'Noto Sans TC', 'Microsoft JhengHei', sans-serif;
+        -webkit-user-select: none;
+        user-select: none;
+        overscroll-behavior: none;
       }
-      main { max-width: 832px; margin: 0 auto; padding: 12px 16px 24px; }
+      main {
+        max-width: 832px;
+        margin: 0 auto;
+        padding: 12px 16px 24px;
+        padding-left: max(16px, env(safe-area-inset-left));
+        padding-right: max(16px, env(safe-area-inset-right));
+        padding-bottom: max(24px, env(safe-area-inset-bottom));
+      }
       h1 { font-size: 20px; margin: 4px 0 8px; }
-      .hud { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; margin-bottom: 8px; }
+      .hud { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; margin-bottom: 8px; font-size: 15px; }
       .hud .spacer { flex: 1; }
+      .hud .btns { display: flex; gap: 8px; width: 100%; }
+      .hud .btns button { flex: 1; }
       button {
-        background: #2a2e3a; color: inherit; border: 1px solid #454b5c; border-radius: 6px;
-        padding: 6px 10px; font: inherit; cursor: pointer;
+        background: var(--btn);
+        color: inherit;
+        border: 1px solid var(--btn-border);
+        border-radius: 8px;
+        padding: 0 12px;
+        min-height: 44px;
+        font: inherit;
+        cursor: pointer;
+        touch-action: manipulation;
       }
-      button:hover { background: #353a49; }
+      button:hover { background: var(--btn-hover); }
       .stage { position: relative; }
       canvas { display: block; width: 100%; height: auto; border-radius: 6px; touch-action: none; cursor: pointer; }
-      #roster { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
-      .unit.sel { border-color: #fff; background: #3d4458; }
+      #roster { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-top: 8px; }
+      .unit { text-align: left; }
+      .unit.sel { border-color: var(--fg); background: var(--sel); }
       .unit.dead { opacity: 0.45; cursor: default; }
       #overlay {
         position: absolute; inset: 0; display: flex; flex-direction: column; gap: 16px;
         align-items: center; justify-content: center; text-align: center; padding: 16px;
-        background: #000b; border-radius: 6px; font-size: 18px;
+        background: var(--veil); color: var(--veil-fg); border-radius: 6px; font-size: 18px;
       }
+      #overlay button { color: var(--fg); padding: 0 24px; }
       #overlay[hidden] { display: none; }
-      .help { color: #a9a79f; font-size: 14px; line-height: 1.6; }
+      .help { color: var(--muted); font-size: 14px; line-height: 1.6; }
+      @media (min-width: 640px) {
+        #roster { grid-template-columns: repeat(4, 1fr); }
+        .hud .btns { width: auto; }
+        .hud .btns button { flex: none; }
+      }
     </style>
   </head>
   <body>
@@ -43,9 +105,11 @@
         <span id="bell"></span>
         <span id="kills"></span>
         <span class="spacer"></span>
-        <button id="pause"></button>
-        <button id="speed"></button>
-        <button id="restart">重新開始</button>
+        <div class="btns">
+          <button id="pause"></button>
+          <button id="speed"></button>
+          <button id="restart">重新開始</button>
+        </div>
       </div>
       <div class="stage">
         <canvas id="game"></canvas>
@@ -57,7 +121,7 @@
       <div id="roster"></div>
       <p class="help">
         點選鎮民（或按數字鍵 1 到 4），再點地面下令移動。鎮民會自動攻擊射程內的敵人，民兵會追擊駐守點附近的敵人。
-        空白鍵暫停，暫停時仍可下令。守住鐘樓直到黎明。
+        暫停時仍可下令（電腦可按空白鍵）。守住鐘樓直到黎明。手機橫放時畫面更大。
       </p>
     </main>
     <script type="module" src="/src/main.ts"></script>
