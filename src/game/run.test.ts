@@ -3,13 +3,16 @@ import {
   BUILD_REPAIR,
   BUILD_WOOD_COST,
   createRun,
+  foodNeeded,
   HEAL_AMOUNT,
+  HUNGER_DAMAGE,
   Job,
   resolveDay,
   Run,
   settleNight,
   startNight,
   TRAIN_BONUS,
+  TRAIN_BONUS_NO_IRON,
 } from './run';
 import { BELL_MAX_HP, update } from './sim';
 
@@ -132,11 +135,16 @@ describe('白天的工作', () => {
     const a = make();
     const b = make();
     const before = { ...a.resources };
+    a.resources.food = b.resources.food = 100;
     resolveDay(a);
     resolveDay(b);
     expect(a.resources).toEqual(b.resources);
     expect(a.resources.wood).toBeGreaterThan(before.wood);
-    expect(a.resources.food).toBeGreaterThan(before.food);
+    // 對照組：沒人搜刮，只扣晚餐
+    const control = createRun(9);
+    control.resources.food = 100;
+    resolveDay(control);
+    expect(a.resources.food).toBeGreaterThan(control.resources.food);
   });
 
   it('搜刮有機會受傷，但血量不會低於 1', () => {
@@ -180,6 +188,7 @@ describe('白天的工作', () => {
 
   it('訓練讓當夜戰鬥力提高，隔夜清除', () => {
     const run = createRun(1);
+    run.resources.iron = 1;
     assign(run, { 1: 'train' });
     resolveDay(run);
     const g = quietNight(run);
@@ -234,5 +243,60 @@ describe('白天的工作', () => {
     resolveDay(run);
     // 三人搜刮至少帶回 3 木石，足夠支付修築的 2
     expect(run.bellHp).toBe(140);
+  });
+});
+
+describe('糧食與鐵料', () => {
+  it('晚餐每人消耗 1 糧食，吃飽不扣血', () => {
+    const run = createRun(1);
+    run.resources.food = 10;
+    for (const r of run.roster) r.hp = r.maxHp;
+    const report = resolveDay(run);
+    expect(foodNeeded(run)).toBe(4);
+    expect(run.resources.food).toBe(6);
+    expect(report.join()).toContain('全員吃飽');
+    for (const r of run.roster) expect(r.hp).toBe(r.maxHp);
+  });
+
+  it('糧食不足時，缺幾份就有幾人挨餓，糧食歸零', () => {
+    const run = createRun(1);
+    run.resources.food = 1; // 需要 4，缺 3
+    assign(run, { 1: 'train', 2: 'train', 3: 'train', 4: 'train' }); // 不休息，避免回血干擾
+    run.resources.iron = 4;
+    const before = run.roster.map((r) => r.hp);
+    resolveDay(run);
+    expect(run.resources.food).toBe(0);
+    const hurt = run.roster.filter((r, i) => r.hp < before[i]);
+    expect(hurt).toHaveLength(3);
+    for (const r of hurt) expect(r.hp).toBe(Math.max(1, r.maxHp - HUNGER_DAMAGE));
+  });
+
+  it('挨餓不會讓人餓死，血量最低留 1', () => {
+    const run = createRun(1);
+    run.resources.food = 0;
+    for (const r of run.roster) r.hp = 5;
+    assign(run, { 1: 'train', 2: 'train', 3: 'train', 4: 'train' });
+    resolveDay(run);
+    for (const r of run.roster) expect(r.hp).toBeGreaterThanOrEqual(1);
+  });
+
+  it('挨餓的人選擇可重現', () => {
+    const play = () => {
+      const run = createRun(4);
+      run.resources.food = 0;
+      assign(run, { 1: 'train', 2: 'train', 3: 'train', 4: 'train' });
+      return resolveDay(run).join();
+    };
+    expect(play()).toBe(play());
+  });
+
+  it('訓練耗 1 鐵料；沒有鐵料時加成較小', () => {
+    const run = createRun(1);
+    run.resources.iron = 1;
+    assign(run, { 1: 'train', 2: 'train' });
+    resolveDay(run);
+    expect(run.resources.iron).toBe(0);
+    expect(run.roster[0].powerMul).toBe(TRAIN_BONUS);
+    expect(run.roster[1].powerMul).toBe(TRAIN_BONUS_NO_IRON);
   });
 });

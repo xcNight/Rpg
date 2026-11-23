@@ -19,6 +19,7 @@
         --sel: #fff7d6;
         --veil: rgba(20, 22, 28, 0.82);
         --veil-fg: #f2efe8;
+        --warn: #b3261e;
       }
       @media (prefers-color-scheme: dark) {
         :root:not([data-theme='light']) {
@@ -29,9 +30,11 @@
           --btn-hover: #353a49;
           --btn-border: #454b5c;
           --sel: #3d4458;
+          --warn: #ff8a80;
         }
       }
       :root[data-theme='dark'] {
+        --warn: #ff8a80;
         --bg: #14161c;
         --fg: #e8e6df;
         --muted: #a9a79f;

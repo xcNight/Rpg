@@ -1,6 +1,16 @@
 // 進入點：負責輸入、遊戲迴圈與介面文字。
 // 一局的流程：白天（指派工作）→ 夜晚（即時守城）→ 結算 → 下一個白天。
-import { createRun, Job, JOB_INFO, JOB_ORDER, resolveDay, Run, settleNight, startNight } from './game/run';
+import {
+  createRun,
+  foodNeeded,
+  Job,
+  JOB_INFO,
+  JOB_ORDER,
+  resolveDay,
+  Run,
+  settleNight,
+  startNight,
+} from './game/run';
 import { BELL_MAX_HP, Game, H, orderMove, update, VILLAGER_STATS, W } from './game/sim';
 import { render, TILE } from './render';
 
@@ -97,9 +107,26 @@ function onAgain() {
   else restart();
 }
 
-function buildDayPanel() {
+/** 資源與晚餐預告。工作安排改變時也會重算（搜刮平均每人帶回約 2 糧食） */
+function refreshDayInfo() {
   const res = run.resources;
-  elDayInfo.textContent = `木石 ${res.wood}　糧食 ${res.food}　鐵料 ${res.iron}　｜　鐘樓 ${run.bellHp} / ${BELL_MAX_HP}`;
+  const need = foodNeeded(run);
+  const scavengers = run.roster.filter((r) => run.jobs[r.id] === 'scavenge').length;
+  const line1 = document.createElement('div');
+  line1.textContent = `木石 ${res.wood}　糧食 ${res.food}　鐵料 ${res.iron}　｜　鐘樓 ${run.bellHp} / ${BELL_MAX_HP}`;
+  const line2 = document.createElement('div');
+  const expected = res.food + scavengers * 2;
+  line2.textContent = `今晚晚餐需糧食 ${need}（已安排 ${scavengers} 人搜刮，預估約有 ${expected}）`;
+  if (expected < need) {
+    line2.textContent += ' ⚠ 恐怕不夠，會有人挨餓';
+    line2.style.color = 'var(--warn)';
+    line2.style.fontWeight = '600';
+  }
+  elDayInfo.replaceChildren(line1, line2);
+}
+
+function buildDayPanel() {
+  refreshDayInfo();
   elJobs.replaceChildren(
     ...run.roster.map((r) => {
       const row = document.createElement('div');
@@ -117,6 +144,7 @@ function buildDayPanel() {
       sel.value = run.jobs[r.id] ?? 'rest';
       sel.onchange = () => {
         run.jobs[r.id] = sel.value as Job;
+        refreshDayInfo();
       };
       row.append(label, sel);
       return row;

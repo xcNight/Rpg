@@ -27,7 +27,7 @@ export interface Run {
 export const JOB_INFO: Record<Job, { label: string; desc: string }> = {
   build: { label: '修築', desc: '耗木石 2，修復鐘樓 40 點耐久' },
   scavenge: { label: '搜刮', desc: '帶回木石、糧食、鐵料；有 25% 機率受傷' },
-  train: { label: '訓練', desc: '下一夜戰鬥力 +25%' },
+  train: { label: '訓練', desc: '耗鐵料 1，下一夜戰鬥力 +25%（沒有鐵料只有 +10%）' },
   heal: { label: '治療', desc: '照料傷勢最重的同伴，回復 40 點血量' },
   rest: { label: '休息', desc: '回復自身 50% 血量' },
 };
@@ -36,10 +36,20 @@ export const JOB_ORDER: Job[] = ['build', 'scavenge', 'train', 'heal', 'rest'];
 export const BUILD_WOOD_COST = 2;
 export const BUILD_REPAIR = 40;
 export const TRAIN_BONUS = 1.25;
+export const TRAIN_BONUS_NO_IRON = 1.1;
+export const TRAIN_IRON_COST = 1;
+/** 每人每晚消耗的糧食；不夠時缺幾份就有幾人挨餓 */
+export const FOOD_PER_PERSON = 1;
+export const HUNGER_DAMAGE = 25;
 export const HEAL_AMOUNT = 40;
 export const REST_RATIO = 0.5;
 export const SCAVENGE_INJURY_CHANCE = 0.25;
 export const SCAVENGE_INJURY = 15;
+
+/** 今晚晚餐需要的糧食 */
+export function foodNeeded(run: Run): number {
+  return run.roster.length * FOOD_PER_PERSON;
+}
 
 export function createRun(seed: number, maxNights = 7): Run {
   const roster = DEFAULT_ROSTER.map((r) => ({ ...r }));
@@ -104,8 +114,14 @@ export function resolveDay(run: Run): string[] {
   }
 
   for (const r of workers('train')) {
-    r.powerMul = TRAIN_BONUS;
-    report.push(`${r.name} 訓練：下一夜戰鬥力 +${Math.round((TRAIN_BONUS - 1) * 100)}%`);
+    if (run.resources.iron >= TRAIN_IRON_COST) {
+      run.resources.iron -= TRAIN_IRON_COST;
+      r.powerMul = TRAIN_BONUS;
+      report.push(`${r.name} 訓練：耗鐵料 ${TRAIN_IRON_COST}，下一夜戰鬥力 +${Math.round((TRAIN_BONUS - 1) * 100)}%`);
+    } else {
+      r.powerMul = TRAIN_BONUS_NO_IRON;
+      report.push(`${r.name} 訓練：鐵料不足，戰鬥力只有 +${Math.round((TRAIN_BONUS_NO_IRON - 1) * 100)}%`);
+    }
   }
 
   for (const r of workers('heal')) {
@@ -128,6 +144,24 @@ export function resolveDay(run: Run): string[] {
     const gain = Math.min(Math.ceil(r.maxHp * REST_RATIO), r.maxHp - r.hp);
     r.hp += gain;
     if (gain > 0) report.push(`${r.name} 休息：+${gain}`);
+  }
+
+  // 晚餐：每人 1 份糧食，不夠的話隨機挑缺口人數挨餓
+  const need = foodNeeded(run);
+  const eaten = Math.min(need, run.resources.food);
+  run.resources.food -= eaten;
+  const hungry = need - eaten;
+  if (hungry === 0) {
+    report.push(`晚餐：全員吃飽（糧食 -${eaten}）`);
+  } else {
+    const pool = [...run.roster];
+    const names: string[] = [];
+    for (let i = 0; i < hungry && pool.length > 0; i++) {
+      const [r] = pool.splice(Math.floor(rng() * pool.length), 1);
+      r.hp = Math.max(1, r.hp - HUNGER_DAMAGE);
+      names.push(r.name);
+    }
+    report.push(`晚餐：糧食不足！${names.join('、')} 挨餓（血量 -${HUNGER_DAMAGE}）`);
   }
 
   return report;
