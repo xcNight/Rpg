@@ -40,6 +40,12 @@ export interface Run {
   /** 每位鎮民（id）今天的工作 */
   jobs: Record<number, Job>;
   status: RunStatus;
+  /** 今晚是否已經開戰（白天已結算）。存檔時用來避免白天的選擇被重來 */
+  nightStarted: boolean;
+  /** 整局累計的統計，給局終畫面使用 */
+  kills: number;
+  breaches: number;
+  fallen: { name: string; night: number }[];
 }
 
 export const JOB_INFO: Record<Job, { label: string; desc: string }> = {
@@ -134,6 +140,10 @@ export function createRun(seed: number, maxNights = 7): Run {
     placedToday: [],
     jobs: Object.fromEntries(roster.map((r) => [r.id, 'rest' as Job])),
     status: 'between',
+    nightStarted: false,
+    kills: 0,
+    breaches: 0,
+    fallen: [],
   };
 }
 
@@ -263,6 +273,12 @@ export function settleNight(run: Run, game: Game): Run {
   if (game.phase === 'night') throw new Error('夜晚尚未結束');
 
   const byId = new Map(game.villagers.map((v) => [v.id, v]));
+  for (const r of run.roster) {
+    if (!byId.get(r.id)?.alive) run.fallen.push({ name: r.name, night: run.night });
+  }
+  run.kills += game.kills;
+  run.breaches += game.breaches;
+  run.nightStarted = false;
   run.roster = run.roster.filter((r) => byId.get(r.id)?.alive);
   for (const r of run.roster) {
     r.hp = Math.ceil(byId.get(r.id)!.hp);

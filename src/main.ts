@@ -31,6 +31,7 @@ import {
   WALL_HP,
 } from './game/sim';
 import { render, TILE } from './render';
+import { parseRun, serializeRun } from './game/save';
 
 const canvas = document.getElementById('game') as HTMLCanvasElement;
 const ctx = canvas.getContext('2d')!;
@@ -57,15 +58,47 @@ const btnSpeed = $('speed');
 
 type Mode = 'day' | 'night';
 
+const SAVE_KEY = 'last-night.save.v1';
+const params = new URLSearchParams(location.search);
+/** 測試用 ?night=N 時不讀也不寫存檔，免得蓋掉真正的進度 */
+const persist = !params.has('night');
+
+// localStorage 可能被停用或滿了（私密瀏覽、嵌入頁面等），一律包 try/catch，失敗就當作沒有存檔
+function readSave(): Run | null {
+  if (!persist) return null;
+  try {
+    return parseRun(localStorage.getItem(SAVE_KEY));
+  } catch {
+    return null;
+  }
+}
+function writeSave() {
+  if (!persist || run.status !== 'between') return;
+  try {
+    localStorage.setItem(SAVE_KEY, serializeRun(run));
+  } catch {
+    /* 存不了就算了，遊戲照常進行 */
+  }
+}
+function clearSave() {
+  if (!persist) return;
+  try {
+    localStorage.removeItem(SAVE_KEY);
+  } catch {
+    /* 同上 */
+  }
+}
+
 /** 新開一局。測試用：網址加 ?night=7 可直接從指定夜數開始（例如測首領戰） */
 function newRun(): Run {
   const r = createRun(Date.now());
-  const n = Number(new URLSearchParams(location.search).get('night'));
+  const n = Number(params.get('night'));
   if (Number.isInteger(n) && n >= 1 && n <= r.maxNights) r.night = n;
   return r;
 }
 
-let run: Run = newRun();
+const resumedRun = readSave();
+let run: Run = resumedRun ?? newRun();
 let game: Game = startNight(run);
 let mode: Mode = 'day';
 // 這一夜是否已結算進 run（避免重複結算）
@@ -91,16 +124,17 @@ function enterDay() {
   elLog.hidden = true;
   elRoster.hidden = true;
   elDay.hidden = false;
+  run.nightStarted = false;
+  writeSave();
   buildDayPanel();
   syncButtons();
   updateHud();
 }
 
-/** 按下「入夜」：結算白天的工作，然後開始夜晚戰鬥 */
-function startNightFromDay() {
-  const report = resolveDay(run);
+/** 在白天面板上方顯示一段文字（第一行粗體） */
+function setLog(lines: string[]) {
   elLog.replaceChildren(
-    ...[`第 ${run.night} 天的工作：`, ...(report.length ? report : ['今天沒有特別的事。'])].map((t, i) => {
+    ...lines.map((t, i) => {
       const d = document.createElement('div');
       d.textContent = t;
       if (i === 0) d.style.fontWeight = '600';
@@ -108,7 +142,19 @@ function startNightFromDay() {
     }),
   );
   elLog.hidden = false;
+}
 
+/** 按下「入夜」：結算白天的工作並存檔（之後白天的選擇就不能反悔），然後開始夜晚戰鬥 */
+function startNightFromDay() {
+  const report = resolveDay(run);
+  setLog([`第 ${run.night} 天的工作：`, ...(report.length ? report : ['今天沒有特別的事。'])]);
+  run.nightStarted = true;
+  writeSave();
+  launchNight();
+}
+
+/** 以目前的局狀態開始夜晚戰鬥（白天已結算）。從存檔接續時也走這裡 */
+function launchNight() {
   mode = 'night';
   game = startNight(run);
   settled = false;
@@ -125,6 +171,7 @@ function startNightFromDay() {
 
 /** 重新開一局（回到第 1 天） */
 function restart() {
+  clearSave();
   run = newRun();
   enterDay();
 }
@@ -192,6 +239,7 @@ function buildDefensePanel() {
     b.disabled = disabled;
     b.onclick = () => {
       onclick();
+      writeSave();
       // 重建預覽畫面與面板，讓木石與地圖立刻反映
       game = startNight(run);
       buildDayPanel();
@@ -243,6 +291,7 @@ function buildDayPanel() {
       sel.onchange = () => {
         run.jobs[r.id] = sel.value as Job;
         refreshDayInfo();
+        writeSave();
       };
       row.append(label, sel);
       return row;
@@ -356,24 +405,52 @@ function updateHud() {
     settled = true;
     const nightNo = run.night;
     const died = game.villagers.filter((v) => !v.alive).map((v) => v.name);
+    const earlyDawn = game.bossSpawned && game.time < game.nightLength;
     settleNight(run, game);
-    const lost =
-      (died.length > 0 ? `陣亡：${died.join('、')}。` : '無人陣亡。') +
-      (game.breaches > 0 ? `城防被破壞 ${game.breaches} 處。` : '');
-    if (run.status === 'lost') {
-      elResult.textContent = `小鎮在第 ${nightNo} 夜陷落……${lost}擊殺 ${game.kills}。`;
-      btnAgain.textContent = '重新開局';
-    } else if (run.status === 'won') {
-      elResult.textContent = game.bossSpawned && game.time < game.nightLength
-        ? `亡靈領主倒下了，敵人潰散！小鎮撐過了全部夜晚。存活 ${run.roster.length} 人。`
-        : `第 ${run.maxNights} 夜過去，天亮了！小鎮撐過了全部夜晚。存活 ${run.roster.length} 人。`;
-      btnAgain.textContent = '重新開局';
-    } else {
+    if (run.status === 'between') {
+      // 夜晚一結束就存下一天，在結算畫面重新整理也不能把這一夜重打一次
+      writeSave();
+      const lost =
+        (died.length > 0 ? `陣亡：${died.join('、')}。` : '無人陣亡。') +
+        (game.breaches > 0 ? `城防被破壞 ${game.breaches} 處。` : '');
       elResult.textContent = `第 ${nightNo} 夜撐過了。${lost}存活 ${run.roster.length} 人，擊殺 ${game.kills}。`;
       btnAgain.textContent = `進入第 ${run.night} 天`;
+    } else {
+      clearSave();
+      showEnding(nightNo, earlyDawn);
+      btnAgain.textContent = '重新開局';
     }
     elOverlay.hidden = false;
   }
+}
+
+/** 局終畫面：結果與整局統計 */
+function showEnding(nightNo: number, earlyDawn: boolean) {
+  const won = run.status === 'won';
+  const title = document.createElement('div');
+  title.className = 'title';
+  title.textContent = won
+    ? earlyDawn
+      ? '亡靈領主倒下了，敵人潰散！'
+      : '天亮了！小鎮撐過了全部夜晚'
+    : `小鎮在第 ${nightNo} 夜陷落……`;
+  const survivedNights = won ? run.maxNights : nightNo - 1;
+  const names = (xs: string[]) => (xs.length > 0 ? xs.join('、') : '無');
+  const rows: [string, string][] = [
+    ['撐過的夜晚', `${survivedNights} / ${run.maxNights}`],
+    ['存活鎮民', names(run.roster.map((r) => r.name))],
+    ['陣亡鎮民', names(run.fallen.map((f) => `${f.name}（第 ${f.night} 夜）`))],
+    ['累計擊殺', `${run.kills}`],
+    ['城防被破壞', `${run.breaches} 處`],
+  ];
+  const list = document.createElement('div');
+  list.className = 'stats';
+  for (const [k, v] of rows) {
+    const d = document.createElement('div');
+    d.textContent = `${k}：${v}`;
+    list.append(d);
+  }
+  elResult.replaceChildren(title, list);
 }
 
 let last = performance.now();
@@ -404,5 +481,12 @@ function frame(now: number) {
   requestAnimationFrame(frame);
 }
 
-enterDay();
+if (resumedRun && run.nightStarted) {
+  // 夜晚打到一半關掉頁面：回到這一夜的開頭（敵人相同，指揮要重來）
+  setLog([`已從存檔接續：第 ${run.night} 夜重新開始。`]);
+  launchNight();
+} else {
+  enterDay();
+  if (resumedRun) setLog([`已從存檔接續第 ${run.night} 天。想重打可按「重新開始」。`]);
+}
 requestAnimationFrame(frame);
