@@ -25,7 +25,7 @@ function unit(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, co
   ctx.fillText(glyph, x, y + 1);
 }
 
-export function render(ctx: CanvasRenderingContext2D, g: Game, selectedId: number | null): void {
+export function render(ctx: CanvasRenderingContext2D, g: Game, selectedId: number | null, daylight = false): void {
   // 地圖
   for (let y = 0; y < H; y++) {
     for (let x = 0; x < W; x++) {
@@ -104,6 +104,12 @@ export function render(ctx: CanvasRenderingContext2D, g: Game, selectedId: numbe
   }
 
   // 夜色：越接近黎明越亮
+  // 白天不加夜色，並略微提亮
+  if (daylight) {
+    ctx.fillStyle = 'rgba(255, 244, 200, 0.08)';
+    ctx.fillRect(0, 0, W * TILE, H * TILE);
+    return;
+  }
   const dark = 0.35 * (1 - g.time / g.nightLength);
   ctx.fillStyle = `rgba(10, 14, 40, ${Math.max(0, dark)})`;
   ctx.fillRect(0, 0, W * TILE, H * TILE);

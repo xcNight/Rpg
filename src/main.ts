@@ -1,6 +1,7 @@
 // 進入點：負責輸入、遊戲迴圈與介面文字。
-import { createRun, Run, settleNight, startNight } from './game/run';
-import { Game, H, orderMove, update, VILLAGER_STATS, W } from './game/sim';
+// 一局的流程：白天（指派工作）→ 夜晚（即時守城）→ 結算 → 下一個白天。
+import { createRun, Job, JOB_INFO, JOB_ORDER, resolveDay, Run, settleNight, startNight } from './game/run';
+import { BELL_MAX_HP, Game, H, orderMove, update, VILLAGER_STATS, W } from './game/sim';
 import { render, TILE } from './render';
 
 const canvas = document.getElementById('game') as HTMLCanvasElement;
@@ -15,59 +16,136 @@ const elKills = $('kills');
 const elRoster = $('roster');
 const elOverlay = $('overlay');
 const elResult = $('result');
+const elDay = $('day');
+const elDayInfo = $('dayInfo');
+const elJobs = $('jobs');
+const elJobHelp = $('jobHelp');
+const elLog = $('log');
 const btnAgain = $('again');
 const btnPause = $('pause');
 const btnSpeed = $('speed');
 
+type Mode = 'day' | 'night';
+
 let run: Run = createRun(Date.now());
 let game: Game = startNight(run);
+let mode: Mode = 'day';
 // 這一夜是否已結算進 run（避免重複結算）
-let settled = false;
-// 預設選取第一位鎮民，手機上不用先點一次才能下令
-let selected: number | null = game.villagers[0].id;
+let settled = true;
+// 畫面上顯示的夜數：結算後 run.night 已加一，但結果畫面仍屬於剛打完的那一夜
+let shownNight = run.night;
+let selected: number | null = null;
 // 點擊目的地的短暫標記，讓觸控時看得出命令有生效
 let marker: { x: number; y: number; ttl: number } | null = null;
 let paused = false;
 let speed = 1;
 
-// 畫面上顯示的夜數：結算後 run.night 已加一，但結果畫面仍屬於剛打完的那一夜
-let shownNight = run.night;
-
-function beginNight() {
+/** 進入白天：以目前名冊建立預覽畫面，並顯示工作指派面板 */
+function enterDay() {
+  mode = 'day';
   game = startNight(run);
+  settled = true;
   shownNight = run.night;
-  settled = false;
-  selected = game.villagers[0].id;
+  selected = null;
   marker = null;
   paused = false;
   elOverlay.hidden = true;
+  elLog.hidden = true;
+  elRoster.hidden = true;
+  elDay.hidden = false;
+  buildDayPanel();
   syncButtons();
+  updateHud();
 }
 
-/** 重新開一局（回到第 1 夜） */
+/** 按下「入夜」：結算白天的工作，然後開始夜晚戰鬥 */
+function startNightFromDay() {
+  const report = resolveDay(run);
+  elLog.replaceChildren(
+    ...[`第 ${run.night} 天的工作：`, ...(report.length ? report : ['今天沒有特別的事。'])].map((t, i) => {
+      const d = document.createElement('div');
+      d.textContent = t;
+      if (i === 0) d.style.fontWeight = '600';
+      return d;
+    }),
+  );
+  elLog.hidden = false;
+
+  mode = 'night';
+  game = startNight(run);
+  settled = false;
+  shownNight = run.night;
+  selected = game.villagers[0].id;
+  marker = null;
+  paused = false;
+  elDay.hidden = true;
+  elRoster.hidden = false;
+  elOverlay.hidden = true;
+  syncButtons();
+  updateHud();
+}
+
+/** 重新開一局（回到第 1 天） */
 function restart() {
   run = createRun(Date.now());
-  beginNight();
+  enterDay();
 }
 
-/** 按下結果畫面的按鈕：局還在進行就接著下一夜，否則重新開局 */
+/** 按下結果畫面的按鈕：局還在進行就進入下一個白天，否則重新開局 */
 function onAgain() {
-  if (run.status === 'between') beginNight();
+  if (run.status === 'between') enterDay();
   else restart();
+}
+
+function buildDayPanel() {
+  const res = run.resources;
+  elDayInfo.textContent = `木石 ${res.wood}　糧食 ${res.food}　鐵料 ${res.iron}　｜　鐘樓 ${run.bellHp} / ${BELL_MAX_HP}`;
+  elJobs.replaceChildren(
+    ...run.roster.map((r) => {
+      const row = document.createElement('div');
+      row.className = 'jobrow';
+      const label = document.createElement('span');
+      label.textContent = `${VILLAGER_STATS[r.kind].label} ${r.name}　血量 ${r.hp}/${r.maxHp}`;
+      const sel = document.createElement('select');
+      sel.setAttribute('aria-label', `${r.name} 的工作`);
+      for (const job of JOB_ORDER) {
+        const opt = document.createElement('option');
+        opt.value = job;
+        opt.textContent = JOB_INFO[job].label;
+        sel.append(opt);
+      }
+      sel.value = run.jobs[r.id] ?? 'rest';
+      sel.onchange = () => {
+        run.jobs[r.id] = sel.value as Job;
+      };
+      row.append(label, sel);
+      return row;
+    }),
+  );
+  elJobHelp.replaceChildren(
+    ...JOB_ORDER.map((job) => {
+      const li = document.createElement('li');
+      li.textContent = `${JOB_INFO[job].label}：${JOB_INFO[job].desc}`;
+      return li;
+    }),
+  );
 }
 
 function syncButtons() {
   btnPause.textContent = paused ? '▶ 繼續' : '⏸ 暫停';
   btnSpeed.textContent = `速度 ×${speed}`;
+  (btnPause as HTMLButtonElement).disabled = mode === 'day';
+  (btnSpeed as HTMLButtonElement).disabled = mode === 'day';
 }
 
 function togglePause() {
+  if (mode !== 'night') return;
   paused = !paused;
   syncButtons();
 }
 
 canvas.addEventListener('pointerdown', (ev) => {
-  if (game.phase !== 'night') return;
+  if (mode !== 'night' || game.phase !== 'night') return;
   const rect = canvas.getBoundingClientRect();
   const x = ((ev.clientX - rect.left) / rect.width) * W;
   const y = ((ev.clientY - rect.top) / rect.height) * H;
@@ -103,6 +181,7 @@ canvas.addEventListener('pointerdown', (ev) => {
 canvas.addEventListener('contextmenu', (ev) => ev.preventDefault());
 
 window.addEventListener('keydown', (ev) => {
+  if (mode !== 'night') return;
   if (ev.code === 'Escape') {
     selected = null;
   } else if (ev.code === 'Space') {
@@ -120,9 +199,16 @@ btnSpeed.addEventListener('click', () => {
   syncButtons();
 });
 $('restart').addEventListener('click', restart);
-$('again').addEventListener('click', onAgain);
+btnAgain.addEventListener('click', onAgain);
+$('startNight').addEventListener('click', startNightFromDay);
 
 function updateHud() {
+  if (mode === 'day') {
+    elTime.textContent = `第 ${run.night} / ${run.maxNights} 天　白天`;
+    elBell.textContent = `鐘樓 ${run.bellHp} / ${BELL_MAX_HP}`;
+    elKills.textContent = '';
+    return;
+  }
   const left = Math.max(0, game.nightLength - game.time);
   elTime.textContent = `第 ${shownNight} / ${run.maxNights} 夜　距離黎明 ${Math.ceil(left)} 秒`;
   elBell.textContent = `鐘樓 ${Math.ceil(game.bellHp)} / ${game.bellMaxHp}`;
@@ -151,7 +237,7 @@ function updateHud() {
       btnAgain.textContent = '重新開局';
     } else {
       elResult.textContent = `第 ${nightNo} 夜撐過了。${lost}存活 ${run.roster.length} 人，擊殺 ${game.kills}。`;
-      btnAgain.textContent = `進入第 ${run.night} 夜`;
+      btnAgain.textContent = `進入第 ${run.night} 天`;
     }
     elOverlay.hidden = false;
   }
@@ -162,8 +248,8 @@ let hudTimer = 0;
 function frame(now: number) {
   const dt = Math.min(0.1, (now - last) / 1000);
   last = now;
-  if (!paused) update(game, dt * speed);
-  render(ctx, game, selected);
+  if (mode === 'night' && !paused) update(game, dt * speed);
+  render(ctx, game, selected, mode === 'day');
   if (marker) {
     marker.ttl -= dt;
     if (marker.ttl <= 0) marker = null;
@@ -185,5 +271,5 @@ function frame(now: number) {
   requestAnimationFrame(frame);
 }
 
-syncButtons();
+enterDay();
 requestAnimationFrame(frame);

@@ -25,6 +25,8 @@ export interface Villager extends Point {
   path: Point[];
   /** 駐守點：民兵追擊後會回到這裡 */
   anchor: Point;
+  /** 戰鬥力倍率（白天訓練的加成），1 為無加成 */
+  powerMul: number;
   alive: boolean;
 }
 
@@ -171,6 +173,8 @@ export interface RosterEntry {
   name: string;
   hp: number;
   maxHp: number;
+  /** 下一夜的戰鬥力倍率，沒有設定視為 1 */
+  powerMul?: number;
 }
 
 export const DEFAULT_ROSTER: RosterEntry[] = [
@@ -203,11 +207,18 @@ function makeVillager(r: RosterEntry, tx: number, ty: number): Villager {
     cd: 0,
     path: [],
     anchor: c,
+    powerMul: r.powerMul ?? 1,
     alive: true,
   };
 }
 
-export function createGame(seed = 1, roster: RosterEntry[] = DEFAULT_ROSTER): Game {
+export const BELL_MAX_HP = 300;
+
+export function createGame(
+  seed = 1,
+  roster: RosterEntry[] = DEFAULT_ROSTER,
+  bellHp: number = BELL_MAX_HP,
+): Game {
   const tiles = buildTiles();
   return {
     tiles,
@@ -218,8 +229,8 @@ export function createGame(seed = 1, roster: RosterEntry[] = DEFAULT_ROSTER): Ga
     }),
     enemies: [],
     effects: [],
-    bellHp: 300,
-    bellMaxHp: 300,
+    bellHp: Math.min(bellHp, BELL_MAX_HP),
+    bellMaxHp: BELL_MAX_HP,
     time: 0,
     nightLength: 90,
     phase: 'night',
@@ -363,7 +374,7 @@ function updateVillager(g: Game, v: Villager, dt: number): void {
       if (!target || u.hp / u.maxHp < target.hp / target.maxHp) target = u;
     }
     if (target) {
-      target.hp = Math.min(target.maxHp, target.hp + st.power);
+      target.hp = Math.min(target.maxHp, target.hp + st.power * v.powerMul);
       v.cd = st.cd;
       g.effects.push({ kind: 'heal', x1: v.x, y1: v.y, x2: target.x, y2: target.y, ttl: 0.3 });
     }
@@ -371,7 +382,7 @@ function updateVillager(g: Game, v: Villager, dt: number): void {
   }
   const foe = nearest(g.enemies, v, st.range);
   if (foe) {
-    foe.hp -= st.power;
+    foe.hp -= st.power * v.powerMul;
     v.cd = st.cd;
     g.effects.push({
       kind: v.kind === 'archer' ? 'shot' : 'hit',
