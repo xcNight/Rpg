@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  BARRICADE_WOOD_COST,
+  barricades,
   BUILD_REPAIR,
   BUILD_WOOD_COST,
   createRun,
@@ -7,6 +9,9 @@ import {
   HEAL_AMOUNT,
   HUNGER_DAMAGE,
   Job,
+  openGaps,
+  placeBarricade,
+  removeBarricade,
   resolveDay,
   Run,
   settleNight,
@@ -14,7 +19,10 @@ import {
   TRAIN_BONUS,
   TRAIN_BONUS_NO_IRON,
 } from './run';
-import { BELL_MAX_HP, update } from './sim';
+import { BARRICADE_HP, BELL_MAX_HP, update, W, WALL_HP } from './sim';
+
+const WEST_GATE = 7 * W + 5;
+const WEST_WALL = 5 * W + 5;
 
 /** 把名冊裡指定鎮民設成某項工作，其餘維持預設（休息） */
 function assign(run: Run, jobs: Record<number, Job>) {
@@ -298,5 +306,104 @@ describe('糧食與鐵料', () => {
     expect(run.resources.iron).toBe(0);
     expect(run.roster[0].powerMul).toBe(TRAIN_BONUS);
     expect(run.roster[1].powerMul).toBe(TRAIN_BONUS_NO_IRON);
+  });
+});
+
+describe('城防', () => {
+  it('開局有四個缺口、沒有路障', () => {
+    const run = createRun(1);
+    expect(openGaps(run)).toHaveLength(4);
+    expect(barricades(run)).toHaveLength(0);
+  });
+
+  it('在缺口放路障：耗木石、記為今天放的；牆上或木石不足時不能放', () => {
+    const run = createRun(1);
+    run.resources.wood = 10;
+    expect(placeBarricade(run, WEST_GATE)).toBe(true);
+    expect(run.resources.wood).toBe(10 - BARRICADE_WOOD_COST);
+    expect(run.defense.tiles[WEST_GATE]).toBe(4);
+    expect(run.defense.hp[WEST_GATE]).toBe(BARRICADE_HP);
+    expect(placeBarricade(run, WEST_GATE)).toBe(false); // 已經有路障
+    expect(placeBarricade(run, WEST_WALL)).toBe(false); // 城牆不是缺口
+    run.resources.wood = BARRICADE_WOOD_COST - 1;
+    expect(placeBarricade(run, 7 * W + 14)).toBe(false); // 木石不足
+  });
+
+  it('拆除：當天剛放的退還木石，過夜後再拆不退', () => {
+    const run = createRun(1);
+    run.resources.wood = 10;
+    placeBarricade(run, WEST_GATE);
+    expect(removeBarricade(run, WEST_GATE)).toBe(true);
+    expect(run.resources.wood).toBe(10);
+    expect(run.defense.tiles[WEST_GATE]).toBe(0);
+
+    placeBarricade(run, WEST_GATE);
+    resolveDay(run); // 入夜，今天放的標記清除
+    run.resources.wood = 10;
+    expect(removeBarricade(run, WEST_GATE)).toBe(true);
+    expect(run.resources.wood).toBe(10);
+    expect(removeBarricade(run, WEST_GATE)).toBe(false); // 已經不是路障
+  });
+
+  it('城防會用在夜晚戰鬥裡', () => {
+    const run = createRun(1);
+    run.resources.wood = 10;
+    placeBarricade(run, WEST_GATE);
+    expect(startNight(run).tiles[WEST_GATE]).toBe(4);
+  });
+
+  it('受損與被摧毀的結構會跨夜保留', () => {
+    const run = createRun(1);
+    const g = quietNight(run);
+    g.structHp[WEST_WALL] = 50;
+    const brokenWall = 6 * W + 5;
+    g.tiles[brokenWall] = 0; // 西牆第 4 段被打穿
+    g.structHp[brokenWall] = 0;
+    update(g, 6);
+    settleNight(run, g);
+    expect(run.defense.hp[WEST_WALL]).toBe(50);
+    expect(run.defense.tiles[brokenWall]).toBe(0);
+    expect(openGaps(run)).toContain(brokenWall);
+    expect(startNight(run).structHp[WEST_WALL]).toBe(50);
+  });
+
+  it('修築優先修血量比例最低的結構', () => {
+    const run = createRun(1);
+    run.resources.wood = 10;
+    run.defense.hp[WEST_WALL] = 20; // 17%
+    run.bellHp = 250; // 83%
+    assign(run, { 1: 'build' });
+    const report = resolveDay(run);
+    expect(run.defense.hp[WEST_WALL]).toBe(20 + BUILD_REPAIR);
+    expect(run.bellHp).toBe(250);
+    expect(report.join()).toContain('西牆第 3 段');
+  });
+
+  it('鐘樓比例更低時先修鐘樓；修好後不超過上限', () => {
+    const run = createRun(1);
+    run.resources.wood = 10;
+    run.defense.hp[WEST_WALL] = 100;
+    run.bellHp = 30;
+    assign(run, { 1: 'build' });
+    resolveDay(run);
+    expect(run.bellHp).toBe(30 + BUILD_REPAIR);
+    expect(run.defense.hp[WEST_WALL]).toBe(100);
+
+    const run2 = createRun(1);
+    run2.resources.wood = 10;
+    run2.defense.hp[WEST_WALL] = WALL_HP - 5;
+    assign(run2, { 1: 'build' });
+    resolveDay(run2);
+    expect(run2.defense.hp[WEST_WALL]).toBe(WALL_HP);
+  });
+
+  it('路障也能被修築修復', () => {
+    const run = createRun(1);
+    run.resources.wood = 10;
+    placeBarricade(run, WEST_GATE);
+    run.defense.hp[WEST_GATE] = 10;
+    assign(run, { 1: 'build' });
+    resolveDay(run);
+    expect(run.defense.hp[WEST_GATE]).toBe(10 + BUILD_REPAIR);
   });
 });

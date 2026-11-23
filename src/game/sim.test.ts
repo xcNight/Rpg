@@ -1,5 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import { BELL, createGame, findPath, orderMove, passable, update } from './sim';
+import {
+  BARRICADE_HP,
+  BELL,
+  createDefense,
+  createGame,
+  findPath,
+  orderMove,
+  passable,
+  tileLabel,
+  update,
+  W,
+} from './sim';
+
+const GATES = [7 * W + 5, 7 * W + 14, 11 * W + 10, 3 * W + 9]; // 西、東、南、北門
 
 describe('地圖與尋路', () => {
   it('鐘樓與城牆不可通行，缺口可通行', () => {
@@ -69,5 +82,64 @@ describe('夜晚戰鬥', () => {
     militia.hp = 50;
     update(g, 2);
     expect(militia.hp).toBeGreaterThan(50);
+  });
+});
+
+describe('城牆與路障', () => {
+  const sealedDefense = (gates: number[]) => {
+    const d = createDefense();
+    for (const i of gates) {
+      d.tiles[i] = 4;
+      d.hp[i] = BARRICADE_HP;
+    }
+    return d;
+  };
+
+  it('敵人尋路：走缺口比破路障便宜，全封死時仍然走得到鐘樓', () => {
+    const open = createGame(1, [], 300, sealedDefense([]));
+    const west = createGame(1, [], 300, sealedDefense([GATES[0]]));
+    const all = createGame(1, [], 300, sealedDefense(GATES));
+    const outsideWest = 7 * W + 4;
+    expect(west.flow[outsideWest]).toBeGreaterThan(open.flow[outsideWest]);
+    expect(Number.isFinite(all.flow[outsideWest])).toBe(true);
+    // 西門被封後，從西側來的敵人寧可繞去開著的南門，也不破路障
+    expect(west.flow[outsideWest]).toBeLessThan(all.flow[outsideWest] + 100);
+  });
+
+  it('全部封死時，敵人會打穿路障：耐久歸零後變成缺口', () => {
+    const g = createGame(3, [], 300, sealedDefense(GATES));
+    g.nightLength = 120;
+    update(g, 60);
+    expect(g.breaches).toBeGreaterThan(0);
+    const broken = GATES.filter((i) => g.tiles[i] === 0);
+    expect(broken.length).toBe(g.breaches);
+    for (const i of broken) expect(g.structHp[i]).toBe(0);
+  });
+
+  it('沒有人守時，破口後鐘樓會被攻擊', () => {
+    const g = createGame(3, [], 300, sealedDefense(GATES));
+    update(g, 90);
+    expect(g.bellHp).toBeLessThan(300);
+  });
+
+  it('被打穿的缺口，村民可以穿過走出去', () => {
+    const g = createGame(1, undefined, 300, sealedDefense(GATES));
+    expect(findPath(g, { x: 8.5, y: 7.5 }, 2, 7)).toBeNull(); // 四門全封時走不出去
+    g.tiles[GATES[0]] = 0;
+    expect(findPath(g, { x: 8.5, y: 7.5 }, 2, 7)).not.toBeNull();
+  });
+
+  it('城牆耐久是獨立的資料，建立遊戲時不會改到傳入的城防', () => {
+    const d = sealedDefense([GATES[0]]);
+    const g = createGame(1, [], 300, d);
+    g.structHp[GATES[0]] = 1;
+    g.tiles[GATES[1]] = 4;
+    expect(d.hp[GATES[0]]).toBe(BARRICADE_HP);
+    expect(d.tiles[GATES[1]]).toBe(0);
+  });
+
+  it('城牆環格子有名稱', () => {
+    expect(tileLabel(GATES[0])).toBe('西門');
+    expect(tileLabel(5 * W + 5)).toBe('西牆第 3 段');
   });
 });

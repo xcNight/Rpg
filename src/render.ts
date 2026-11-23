@@ -1,5 +1,5 @@
 // 畫面繪製：只讀取遊戲狀態，不修改它。
-import { BELL, Game, H, VILLAGER_STATS, W } from './game/sim';
+import { BARRICADE_HP, BELL, Game, H, RING, VILLAGER_STATS, W, WALL_HP } from './game/sim';
 
 export const TILE = 40;
 
@@ -32,13 +32,42 @@ export function render(ctx: CanvasRenderingContext2D, g: Game, selectedId: numbe
       const t = g.tiles[y * W + x];
       const inside = x > 5 && x < 14 && y > 3 && y < 11;
       ctx.fillStyle =
-        t === 1 ? '#6b6f7a' : t === 3 ? '#7a5a3c' : inside ? '#3b3f35' : (x + y) % 2 ? '#24331f' : '#263622';
+        t === 1 ? '#6b6f7a' : t === 4 ? '#9a7a45' : t === 3 ? '#7a5a3c' : inside ? '#3b3f35' : (x + y) % 2 ? '#24331f' : '#263622';
       ctx.fillRect(x * TILE, y * TILE, TILE, TILE);
-      if (t === 1 || t === 3) {
+      if (t === 1 || t === 3 || t === 4) {
         ctx.strokeStyle = '#0006';
         ctx.strokeRect(x * TILE + 0.5, y * TILE + 0.5, TILE - 1, TILE - 1);
       }
+      if (t === 4) {
+        // 路障：交叉木條
+        ctx.strokeStyle = '#4a3410';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(x * TILE + 6, y * TILE + 6);
+        ctx.lineTo((x + 1) * TILE - 6, (y + 1) * TILE - 6);
+        ctx.moveTo((x + 1) * TILE - 6, y * TILE + 6);
+        ctx.lineTo(x * TILE + 6, (y + 1) * TILE - 6);
+        ctx.stroke();
+        ctx.lineWidth = 1;
+      }
+      // 受損的城牆與路障顯示耐久條
+      if (t === 1 || t === 4) {
+        const max = t === 1 ? WALL_HP : BARRICADE_HP;
+        const hp = g.structHp[y * W + x];
+        if (hp < max) bar(ctx, (x + 0.5) * TILE, y * TILE + 3, TILE - 10, hp / max, '#e8c34f');
+      }
     }
+  }
+
+  // 白天：用虛線框出城牆環上開著的缺口（可以封堵的位置）
+  if (daylight) {
+    ctx.strokeStyle = '#ffe9a8';
+    ctx.setLineDash([5, 4]);
+    for (const i of RING) {
+      if (g.tiles[i] !== 0) continue;
+      ctx.strokeRect((i % W) * TILE + 3, Math.floor(i / W) * TILE + 3, TILE - 6, TILE - 6);
+    }
+    ctx.setLineDash([]);
   }
 
   // 鐘樓

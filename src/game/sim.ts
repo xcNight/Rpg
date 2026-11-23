@@ -4,8 +4,8 @@
 export const W = 20;
 export const H = 15;
 
-/** 0 地面、1 城牆、2 鐘樓、3 房屋 */
-export type Tile = 0 | 1 | 2 | 3;
+/** 0 地面、1 城牆、2 鐘樓、3 房屋、4 路障（封堵缺口用，比城牆脆弱） */
+export type Tile = 0 | 1 | 2 | 3 | 4;
 export type VillagerKind = 'militia' | 'archer' | 'healer';
 export type Phase = 'night' | 'won' | 'lost';
 
@@ -52,7 +52,9 @@ export interface Effect {
 
 export interface Game {
   tiles: Tile[];
-  /** 每格到鐘樓的步數（走不到為 Infinity） */
+  /** 城牆與路障各格的剩餘耐久（其他格為 0） */
+  structHp: number[];
+  /** 每格到鐘樓的「代價」：走地面 1，破牆或破路障代價更高；走不到為 Infinity */
   flow: number[];
   villagers: Villager[];
   enemies: Enemy[];
@@ -66,6 +68,8 @@ export interface Game {
   nextId: number;
   rng: number;
   kills: number;
+  /** 這一夜被敵人摧毀的城牆與路障數量 */
+  breaches: number;
 }
 
 export const BELL: Point = { x: 10, y: 7 };
@@ -81,6 +85,14 @@ export const VILLAGER_STATS: Record<
 
 export const ENEMY_STATS = { hp: 40, power: 6, range: 0.8, cd: 1, speed: 1.1, aggro: 1.6 };
 const GUARD_RADIUS = 2.5;
+
+export const WALL_HP = 120;
+export const BARRICADE_HP = 60;
+/** 敵人尋路時，破一格城牆／路障相當於多少步路。數字越大，越傾向繞去開著的缺口 */
+const WALL_COST = 12;
+const BARRICADE_COST = 5;
+/** 敵人與要破壞的結構相距多近時開始攻擊（格） */
+const STRUCT_REACH = 1.35;
 
 const idx = (x: number, y: number) => y * W + x;
 const inMap = (x: number, y: number) => x >= 0 && y >= 0 && x < W && y < H;
@@ -144,13 +156,25 @@ const DIRS = [
   [0, -1],
 ];
 
-/** 從鐘樓往外做廣度優先搜尋，算出每格的步數 */
+function enterCost(t: Tile): number {
+  if (t === 0) return 1;
+  if (t === 4) return BARRICADE_COST;
+  if (t === 1) return WALL_COST;
+  return Infinity; // 房屋與鐘樓不能穿越
+}
+
+/** 從鐘樓往外做最短路徑搜尋（Dijkstra），算出每格到鐘樓的代價 */
 function buildFlow(tiles: Tile[]): number[] {
   const flow: number[] = new Array(W * H).fill(Infinity);
-  const queue: number[] = [idx(BELL.x, BELL.y)];
-  flow[queue[0]] = 0;
-  for (let head = 0; head < queue.length; head++) {
-    const cur = queue[head];
+  const done: boolean[] = new Array(W * H).fill(false);
+  flow[idx(BELL.x, BELL.y)] = 0;
+  for (;;) {
+    let cur = -1;
+    for (let i = 0; i < flow.length; i++) {
+      if (!done[i] && flow[i] !== Infinity && (cur === -1 || flow[i] < flow[cur])) cur = i;
+    }
+    if (cur === -1) break;
+    done[cur] = true;
     const cx = cur % W;
     const cy = Math.floor(cur / W);
     for (const [dx, dy] of DIRS) {
@@ -158,12 +182,60 @@ function buildFlow(tiles: Tile[]): number[] {
       const ny = cy + dy;
       if (!inMap(nx, ny)) continue;
       const n = idx(nx, ny);
-      if (tiles[n] !== 0 || flow[n] !== Infinity) continue;
-      flow[n] = flow[cur] + 1;
-      queue.push(n);
+      const c = enterCost(tiles[n]);
+      if (c === Infinity) continue;
+      if (flow[cur] + c < flow[n]) flow[n] = flow[cur] + c;
     }
   }
   return flow;
+}
+
+/** 城牆或路障被摧毀後，重新計算敵人的路線 */
+function rebuildFlow(g: Game): void {
+  g.flow = buildFlow(g.tiles);
+}
+
+/** 一局中跨夜保存的城防：地形與各結構的耐久 */
+export interface Defense {
+  tiles: Tile[];
+  hp: number[];
+}
+
+export function createDefense(): Defense {
+  const tiles = buildTiles();
+  return { tiles, hp: tiles.map((t) => (t === 1 ? WALL_HP : 0)) };
+}
+
+/** 城牆環上的所有格子（原本的城牆與四個缺口），可封堵的位置只會出現在這裡 */
+export const RING: number[] = (() => {
+  const set = new Set<number>();
+  for (let x = 5; x <= 14; x++) {
+    set.add(idx(x, 3));
+    set.add(idx(x, 11));
+  }
+  for (let y = 3; y <= 11; y++) {
+    set.add(idx(5, y));
+    set.add(idx(14, y));
+  }
+  // 城門排最前面（西、東、南、北），其餘城牆依位置排序，介面列表就會先出現最常被攻擊的門
+  const gates = [idx(5, 7), idx(14, 7), idx(10, 11), idx(9, 3)];
+  const rest = [...set].filter((i) => !gates.includes(i)).sort((x, y) => x - y);
+  return [...gates, ...rest];
+})();
+
+/** 城牆環上格子的名稱，給介面與日誌使用 */
+export function tileLabel(i: number): string {
+  const x = i % W;
+  const y = Math.floor(i / W);
+  if (x === 5 && y === 7) return '西門';
+  if (x === 14 && y === 7) return '東門';
+  if (x === 10 && y === 11) return '南門';
+  if (x === 9 && y === 3) return '北門';
+  if (x === 5) return `西牆第 ${y - 2} 段`;
+  if (x === 14) return `東牆第 ${y - 2} 段`;
+  if (y === 3) return `北牆第 ${x - 4} 段`;
+  if (y === 11) return `南牆第 ${x - 4} 段`;
+  return `(${x},${y})`;
 }
 
 /** 一局中跨夜保存的鎮民資料（不含戰鬥中的位置與冷卻） */
@@ -218,10 +290,12 @@ export function createGame(
   seed = 1,
   roster: RosterEntry[] = DEFAULT_ROSTER,
   bellHp: number = BELL_MAX_HP,
+  defense: Defense = createDefense(),
 ): Game {
-  const tiles = buildTiles();
+  const tiles = defense.tiles.slice();
   return {
     tiles,
+    structHp: defense.hp.slice(),
     flow: buildFlow(tiles),
     villagers: roster.map((r, i) => {
       const [tx, ty] = START_SLOTS[i % START_SLOTS.length];
@@ -238,6 +312,7 @@ export function createGame(
     nextId: 100,
     rng: seed | 0,
     kills: 0,
+    breaches: 0,
   };
 }
 
@@ -418,11 +493,10 @@ function updateEnemy(g: Game, e: Enemy, dt: number): void {
     if (stepToward(g, e, prey, step)) return;
   }
 
-  // 否則沿著流場走向鐘樓
+  // 否則沿著流場走向鐘樓：貼著鐘樓就攻擊鐘樓
   const tx = Math.floor(e.x);
   const ty = Math.floor(e.y);
-  const here = g.flow[idx(tx, ty)];
-  if (here <= 1) {
+  if (DIRS.some(([dx, dy]) => inMap(tx + dx, ty + dy) && g.tiles[idx(tx + dx, ty + dy)] === 2)) {
     if (e.cd === 0) {
       g.bellHp = Math.max(0, g.bellHp - ENEMY_STATS.power);
       e.cd = ENEMY_STATS.cd;
@@ -430,7 +504,8 @@ function updateEnemy(g: Game, e: Enemy, dt: number): void {
     }
     return;
   }
-  let best = here;
+  // 挑代價最低的相鄰格；若那一格是城牆或路障，就停下來把它打穿
+  let best = Infinity;
   let bx = tx;
   let by = ty;
   for (const [dx, dy] of DIRS) {
@@ -444,12 +519,33 @@ function updateEnemy(g: Game, e: Enemy, dt: number): void {
       by = ny;
     }
   }
-  const target = { x: bx + 0.5 + e.ox, y: by + 0.5 + e.oy };
+  if (best === Infinity) return;
+  const targetTile = g.tiles[idx(bx, by)];
+  const target = { x: bx + 0.5 + (targetTile === 0 ? e.ox : 0), y: by + 0.5 + (targetTile === 0 ? e.oy : 0) };
   const d = dist(e, target);
+  if (targetTile === 1 || targetTile === 4) {
+    if (d <= STRUCT_REACH) {
+      if (e.cd === 0) attackStructure(g, e, idx(bx, by));
+      return;
+    }
+  }
   if (d > 1e-6) {
     const s = Math.min(step, d);
     e.x += ((target.x - e.x) / d) * s;
     e.y += ((target.y - e.y) / d) * s;
+  }
+}
+
+/** 敵人攻擊一格城牆或路障；耐久歸零就變成缺口並重算路線 */
+function attackStructure(g: Game, e: Enemy, i: number): void {
+  e.cd = ENEMY_STATS.cd;
+  g.structHp[i] -= ENEMY_STATS.power;
+  g.effects.push({ kind: 'hit', x1: e.x, y1: e.y, x2: (i % W) + 0.5, y2: Math.floor(i / W) + 0.5, ttl: 0.15 });
+  if (g.structHp[i] <= 0) {
+    g.structHp[i] = 0;
+    g.tiles[i] = 0;
+    g.breaches++;
+    rebuildFlow(g);
   }
 }
 

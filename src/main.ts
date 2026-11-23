@@ -1,17 +1,34 @@
 // 進入點：負責輸入、遊戲迴圈與介面文字。
 // 一局的流程：白天（指派工作）→ 夜晚（即時守城）→ 結算 → 下一個白天。
 import {
+  BARRICADE_WOOD_COST,
+  barricades,
   createRun,
   foodNeeded,
   Job,
   JOB_INFO,
   JOB_ORDER,
+  openGaps,
+  placeBarricade,
+  removeBarricade,
   resolveDay,
   Run,
   settleNight,
   startNight,
 } from './game/run';
-import { BELL_MAX_HP, Game, H, orderMove, update, VILLAGER_STATS, W } from './game/sim';
+import {
+  BARRICADE_HP,
+  BELL_MAX_HP,
+  Game,
+  H,
+  orderMove,
+  RING,
+  tileLabel,
+  update,
+  VILLAGER_STATS,
+  W,
+  WALL_HP,
+} from './game/sim';
 import { render, TILE } from './render';
 
 const canvas = document.getElementById('game') as HTMLCanvasElement;
@@ -30,6 +47,7 @@ const elDay = $('day');
 const elDayInfo = $('dayInfo');
 const elJobs = $('jobs');
 const elJobHelp = $('jobHelp');
+const elDefense = $('defense');
 const elLog = $('log');
 const btnAgain = $('again');
 const btnPause = $('pause');
@@ -125,8 +143,56 @@ function refreshDayInfo() {
   elDayInfo.replaceChildren(line1, line2);
 }
 
+/** 城防面板：列出開著的缺口（可封堵）與現有路障（可拆除），並摘要城牆受損情況 */
+function buildDefensePanel() {
+  const rows: HTMLElement[] = [];
+  const row = (text: string, btn?: HTMLButtonElement) => {
+    const d = document.createElement('div');
+    d.className = 'jobrow';
+    const span = document.createElement('span');
+    span.textContent = text;
+    d.append(span);
+    if (btn) d.append(btn);
+    rows.push(d);
+  };
+  const button = (text: string, disabled: boolean, onclick: () => void) => {
+    const b = document.createElement('button');
+    b.textContent = text;
+    b.disabled = disabled;
+    b.onclick = () => {
+      onclick();
+      // 重建預覽畫面與面板，讓木石與地圖立刻反映
+      game = startNight(run);
+      buildDayPanel();
+    };
+    return b;
+  };
+
+  for (const i of barricades(run)) {
+    row(
+      `${tileLabel(i)}：路障 ${run.defense.hp[i]}/${BARRICADE_HP}`,
+      button('拆除', false, () => removeBarricade(run, i)),
+    );
+  }
+  const canPlace = run.resources.wood >= BARRICADE_WOOD_COST;
+  for (const i of openGaps(run)) {
+    row(
+      `${tileLabel(i)}：開著`,
+      button(`封堵（木石 ${BARRICADE_WOOD_COST}）`, !canPlace, () => placeBarricade(run, i)),
+    );
+  }
+
+  const damaged = RING.filter((i) => run.defense.tiles[i] === 1 && run.defense.hp[i] < WALL_HP);
+  if (damaged.length > 0) {
+    const lowest = Math.min(...damaged.map((i) => run.defense.hp[i]));
+    row(`城牆受損 ${damaged.length} 段（最低 ${lowest}/${WALL_HP}），安排「修築」可修復`);
+  }
+  elDefense.replaceChildren(...rows);
+}
+
 function buildDayPanel() {
   refreshDayInfo();
+  buildDefensePanel();
   elJobs.replaceChildren(
     ...run.roster.map((r) => {
       const row = document.createElement('div');
@@ -256,7 +322,9 @@ function updateHud() {
     const nightNo = run.night;
     const died = game.villagers.filter((v) => !v.alive).map((v) => v.name);
     settleNight(run, game);
-    const lost = died.length > 0 ? `陣亡：${died.join('、')}。` : '無人陣亡。';
+    const lost =
+      (died.length > 0 ? `陣亡：${died.join('、')}。` : '無人陣亡。') +
+      (game.breaches > 0 ? `城防被破壞 ${game.breaches} 處。` : '');
     if (run.status === 'lost') {
       elResult.textContent = `小鎮在第 ${nightNo} 夜陷落……${lost}擊殺 ${game.kills}。`;
       btnAgain.textContent = '重新開局';

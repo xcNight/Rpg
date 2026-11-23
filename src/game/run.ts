@@ -1,5 +1,17 @@
 // 一局（Run）：跨越多個夜晚的狀態。夜晚戰鬥由 sim.ts 負責，這裡管名冊、資源與白天的工作結算。
-import { BELL_MAX_HP, createGame, DEFAULT_ROSTER, Game, RosterEntry } from './sim';
+import {
+  BARRICADE_HP,
+  BELL_MAX_HP,
+  createDefense,
+  createGame,
+  DEFAULT_ROSTER,
+  Defense,
+  Game,
+  RING,
+  RosterEntry,
+  tileLabel,
+  WALL_HP,
+} from './sim';
 
 /** between：白天配置中；won／lost：整局結束 */
 export type RunStatus = 'between' | 'won' | 'lost';
@@ -19,13 +31,17 @@ export interface Run {
   roster: RosterEntry[];
   resources: Resources;
   bellHp: number;
+  /** 城牆與路障的狀態，跨夜保留（被破壞的地方會變成缺口） */
+  defense: Defense;
+  /** 今天新放的路障（格子索引）。拆除當天放的路障可退還木石 */
+  placedToday: number[];
   /** 每位鎮民（id）今天的工作 */
   jobs: Record<number, Job>;
   status: RunStatus;
 }
 
 export const JOB_INFO: Record<Job, { label: string; desc: string }> = {
-  build: { label: '修築', desc: '耗木石 2，修復鐘樓 40 點耐久' },
+  build: { label: '修築', desc: '耗木石 2，修復受損最重的結構（鐘樓、城牆、路障）40 點耐久' },
   scavenge: { label: '搜刮', desc: '帶回木石、糧食、鐵料；有 25% 機率受傷' },
   train: { label: '訓練', desc: '耗鐵料 1，下一夜戰鬥力 +25%（沒有鐵料只有 +10%）' },
   heal: { label: '治療', desc: '照料傷勢最重的同伴，回復 40 點血量' },
@@ -34,6 +50,8 @@ export const JOB_INFO: Record<Job, { label: string; desc: string }> = {
 export const JOB_ORDER: Job[] = ['build', 'scavenge', 'train', 'heal', 'rest'];
 
 export const BUILD_WOOD_COST = 2;
+/** 在缺口放一座路障所需的木石 */
+export const BARRICADE_WOOD_COST = 3;
 export const BUILD_REPAIR = 40;
 export const TRAIN_BONUS = 1.25;
 export const TRAIN_BONUS_NO_IRON = 1.1;
@@ -45,6 +63,56 @@ export const HEAL_AMOUNT = 40;
 export const REST_RATIO = 0.5;
 export const SCAVENGE_INJURY_CHANCE = 0.25;
 export const SCAVENGE_INJURY = 15;
+
+/** 可修築的結構：鐘樓（index 為 null）與受損的城牆、路障。回傳血量比例最低者，同比例時優先鐘樓 */
+function mostDamaged(run: Run): { index: number | null; label: string; hp: number; max: number } | null {
+  let best: { index: number | null; label: string; hp: number; max: number } | null = null;
+  const consider = (index: number | null, label: string, hp: number, max: number) => {
+    if (hp >= max) return;
+    if (!best || hp / max < best.hp / best.max) best = { index, label, hp, max };
+  };
+  consider(null, '鐘樓', run.bellHp, BELL_MAX_HP);
+  for (const i of RING) {
+    const t = run.defense.tiles[i];
+    if (t === 1) consider(i, tileLabel(i), run.defense.hp[i], WALL_HP);
+    else if (t === 4) consider(i, `${tileLabel(i)}的路障`, run.defense.hp[i], BARRICADE_HP);
+  }
+  return best;
+}
+
+/** 目前開著的缺口（城牆環上的空地），包含原本的城門與被打穿的地方 */
+export function openGaps(run: Run): number[] {
+  return RING.filter((i) => run.defense.tiles[i] === 0);
+}
+
+/** 目前的路障 */
+export function barricades(run: Run): number[] {
+  return RING.filter((i) => run.defense.tiles[i] === 4);
+}
+
+/** 在缺口放路障，成功回傳 true（需要是缺口且木石足夠） */
+export function placeBarricade(run: Run, i: number): boolean {
+  if (!RING.includes(i) || run.defense.tiles[i] !== 0) return false;
+  if (run.resources.wood < BARRICADE_WOOD_COST) return false;
+  run.resources.wood -= BARRICADE_WOOD_COST;
+  run.defense.tiles[i] = 4;
+  run.defense.hp[i] = BARRICADE_HP;
+  run.placedToday.push(i);
+  return true;
+}
+
+/** 拆除路障變回缺口。當天剛放的路障可全額退還木石，之前就有的不退 */
+export function removeBarricade(run: Run, i: number): boolean {
+  if (run.defense.tiles[i] !== 4) return false;
+  run.defense.tiles[i] = 0;
+  run.defense.hp[i] = 0;
+  const k = run.placedToday.indexOf(i);
+  if (k >= 0) {
+    run.placedToday.splice(k, 1);
+    run.resources.wood += BARRICADE_WOOD_COST;
+  }
+  return true;
+}
 
 /** 今晚晚餐需要的糧食 */
 export function foodNeeded(run: Run): number {
@@ -60,6 +128,8 @@ export function createRun(seed: number, maxNights = 7): Run {
     roster,
     resources: { wood: 4, food: 6, iron: 0 },
     bellHp: BELL_MAX_HP,
+    defense: createDefense(),
+    placedToday: [],
     jobs: Object.fromEntries(roster.map((r) => [r.id, 'rest' as Job])),
     status: 'between',
   };
@@ -103,14 +173,18 @@ export function resolveDay(run: Run): string[] {
   for (const r of workers('build')) {
     if (run.resources.wood < BUILD_WOOD_COST) {
       report.push(`${r.name} 想修築，但木石不足`);
-    } else if (run.bellHp >= BELL_MAX_HP) {
-      report.push(`${r.name} 想修築，但鐘樓完好無缺`);
-    } else {
-      run.resources.wood -= BUILD_WOOD_COST;
-      const gain = Math.min(BUILD_REPAIR, BELL_MAX_HP - run.bellHp);
-      run.bellHp += gain;
-      report.push(`${r.name} 修築：鐘樓 +${gain}`);
+      continue;
     }
+    const target = mostDamaged(run);
+    if (!target) {
+      report.push(`${r.name} 想修築，但沒有需要修的地方`);
+      continue;
+    }
+    run.resources.wood -= BUILD_WOOD_COST;
+    const gain = Math.min(BUILD_REPAIR, target.max - target.hp);
+    if (target.index === null) run.bellHp += gain;
+    else run.defense.hp[target.index] += gain;
+    report.push(`${r.name} 修築 ${target.label}：+${gain}`);
   }
 
   for (const r of workers('train')) {
@@ -164,12 +238,13 @@ export function resolveDay(run: Run): string[] {
     report.push(`晚餐：糧食不足！${names.join('、')} 挨餓（血量 -${HUNGER_DAMAGE}）`);
   }
 
+  run.placedToday = [];
   return report;
 }
 
 /** 以目前名冊建立當夜的戰鬥。每夜的亂數種子不同，但整局可重現 */
 export function startNight(run: Run): Game {
-  return createGame(run.seed + run.night * 7919, run.roster, run.bellHp);
+  return createGame(run.seed + run.night * 7919, run.roster, run.bellHp, run.defense);
 }
 
 /**
@@ -190,6 +265,8 @@ export function settleNight(run: Run, game: Game): Run {
     if (!run.roster.some((r) => r.id === Number(id))) delete run.jobs[Number(id)];
   }
   run.bellHp = Math.ceil(game.bellHp);
+  run.defense = { tiles: game.tiles.slice(), hp: game.structHp.slice() };
+  run.placedToday = [];
 
   if (game.phase === 'lost' || run.roster.length === 0) {
     run.status = 'lost';
