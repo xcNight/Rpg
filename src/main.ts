@@ -50,6 +50,12 @@ canvas.addEventListener('pointerdown', (ev) => {
   const x = ((ev.clientX - rect.left) / rect.width) * W;
   const y = ((ev.clientY - rect.top) / rect.height) * H;
   ev.preventDefault();
+  // 滑鼠右鍵：取消選取
+  if (ev.pointerType === 'mouse' && ev.button === 2) {
+    selected = null;
+    return;
+  }
+  if (ev.pointerType === 'mouse' && ev.button !== 0) return;
   // 手指比滑鼠粗，觸控時放寬判定範圍；點到鎮民就選取（取最近的），否則命令已選取的鎮民移動
   const reach = ev.pointerType === 'mouse' ? 0.6 : 1.0;
   let hit: Game['villagers'][number] | null = null;
@@ -62,7 +68,8 @@ canvas.addEventListener('pointerdown', (ev) => {
     }
   }
   if (hit) {
-    selected = hit.id;
+    // 再點一次已選取的鎮民：取消選取
+    selected = hit.id === selected ? null : hit.id;
   } else if (selected !== null) {
     const tx = Math.floor(x);
     const ty = Math.floor(y);
@@ -70,8 +77,13 @@ canvas.addEventListener('pointerdown', (ev) => {
   }
 });
 
+// 右鍵不要跳出瀏覽器選單
+canvas.addEventListener('contextmenu', (ev) => ev.preventDefault());
+
 window.addEventListener('keydown', (ev) => {
-  if (ev.code === 'Space') {
+  if (ev.code === 'Escape') {
+    selected = null;
+  } else if (ev.code === 'Space') {
     ev.preventDefault();
     togglePause();
   } else if (ev.key >= '1' && ev.key <= '9') {
@@ -99,7 +111,7 @@ function updateHud() {
       b.className = 'unit' + (v.id === selected ? ' sel' : '') + (v.alive ? '' : ' dead');
       b.textContent = `${i + 1} ${VILLAGER_STATS[v.kind].label} ${v.name} ${v.alive ? Math.ceil(v.hp) : '陣亡'}`;
       b.disabled = !v.alive;
-      b.onclick = () => (selected = v.id);
+      b.onclick = () => (selected = v.id === selected ? null : v.id);
       return b;
     }),
   );
