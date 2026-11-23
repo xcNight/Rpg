@@ -25,3 +25,6 @@ npm run dev
 | `npm run dev` | 啟動開發伺服器 |
 | `npm test` | 執行單元測試 |
 | `npm run build` | 型別檢查並建置到 `dist/` |
+| `npm run build:single` | 建置並合併成單一檔案 `dist/single.html` |
+
+測試用：網址加上 `?night=7` 可直接從第 7 夜（首領戰）開始。

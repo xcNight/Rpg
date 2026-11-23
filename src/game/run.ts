@@ -7,6 +7,8 @@ import {
   DEFAULT_ROSTER,
   Defense,
   Game,
+  nightConfig,
+  NightConfig,
   RING,
   RosterEntry,
   tileLabel,
@@ -126,7 +128,7 @@ export function createRun(seed: number, maxNights = 7): Run {
     night: 1,
     maxNights,
     roster,
-    resources: { wood: 4, food: 6, iron: 0 },
+    resources: { wood: 4, food: 8, iron: 0 },
     bellHp: BELL_MAX_HP,
     defense: createDefense(),
     placedToday: [],
@@ -242,9 +244,14 @@ export function resolveDay(run: Run): string[] {
   return report;
 }
 
+/** 今晚的難度設定（方向、強度、是否有首領）。白天面板用它做預告，開戰時用的是同一份 */
+export function forecast(run: Run): NightConfig {
+  return nightConfig(run.seed, run.night, run.maxNights);
+}
+
 /** 以目前名冊建立當夜的戰鬥。每夜的亂數種子不同，但整局可重現 */
 export function startNight(run: Run): Game {
-  return createGame(run.seed + run.night * 7919, run.roster, run.bellHp, run.defense);
+  return createGame(run.seed + run.night * 7919, run.roster, run.bellHp, run.defense, forecast(run));
 }
 
 /**

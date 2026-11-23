@@ -70,6 +70,25 @@ export function render(ctx: CanvasRenderingContext2D, g: Game, selectedId: numbe
     ctx.setLineDash([]);
   }
 
+  // 白天：用紅色標出今晚敵人會從哪幾側來
+  if (daylight) {
+    ctx.fillStyle = 'rgba(220, 60, 50, 0.28)';
+    ctx.font = 'bold 14px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    for (const side of g.cfg.sides) {
+      if (side === 'west') ctx.fillRect(0, 2 * TILE, TILE, 11 * TILE);
+      if (side === 'east') ctx.fillRect((W - 1) * TILE, 2 * TILE, TILE, 11 * TILE);
+      if (side === 'south') ctx.fillRect(2 * TILE, (H - 1) * TILE, 16 * TILE, TILE);
+    }
+    ctx.fillStyle = '#ffd9d4';
+    for (const side of g.cfg.sides) {
+      if (side === 'west') ctx.fillText('敵', TILE / 2, 7.5 * TILE);
+      if (side === 'east') ctx.fillText('敵', (W - 0.5) * TILE, 7.5 * TILE);
+      if (side === 'south') ctx.fillText('敵襲', 10 * TILE, (H - 0.5) * TILE);
+    }
+  }
+
   // 鐘樓
   const bx = (BELL.x + 0.5) * TILE;
   const by = (BELL.y + 0.5) * TILE;
@@ -98,8 +117,13 @@ export function render(ctx: CanvasRenderingContext2D, g: Game, selectedId: numbe
     ctx.setLineDash([]);
   }
 
-  // 敵人
+  // 敵人（首領較大、紫色，血條一律顯示）
   for (const e of g.enemies) {
+    if (e.kind === 'boss') {
+      unit(ctx, e.x * TILE, e.y * TILE, 18, '#7a3fa0', '王');
+      bar(ctx, e.x * TILE, e.y * TILE - 26, 36, e.hp / e.maxHp, '#d05bff');
+      continue;
+    }
     unit(ctx, e.x * TILE, e.y * TILE, 11, '#b0503f', '屍');
     if (e.hp < e.maxHp) bar(ctx, e.x * TILE, e.y * TILE - 18, 22, e.hp / e.maxHp, '#e0553f');
   }

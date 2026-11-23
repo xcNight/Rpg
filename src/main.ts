@@ -5,6 +5,7 @@ import {
   barricades,
   createRun,
   foodNeeded,
+  forecast,
   Job,
   JOB_INFO,
   JOB_ORDER,
@@ -48,6 +49,7 @@ const elDayInfo = $('dayInfo');
 const elJobs = $('jobs');
 const elJobHelp = $('jobHelp');
 const elDefense = $('defense');
+const elForecast = $('forecast');
 const elLog = $('log');
 const btnAgain = $('again');
 const btnPause = $('pause');
@@ -55,7 +57,15 @@ const btnSpeed = $('speed');
 
 type Mode = 'day' | 'night';
 
-let run: Run = createRun(Date.now());
+/** 新開一局。測試用：網址加 ?night=7 可直接從指定夜數開始（例如測首領戰） */
+function newRun(): Run {
+  const r = createRun(Date.now());
+  const n = Number(new URLSearchParams(location.search).get('night'));
+  if (Number.isInteger(n) && n >= 1 && n <= r.maxNights) r.night = n;
+  return r;
+}
+
+let run: Run = newRun();
 let game: Game = startNight(run);
 let mode: Mode = 'day';
 // 這一夜是否已結算進 run（避免重複結算）
@@ -115,7 +125,7 @@ function startNightFromDay() {
 
 /** 重新開一局（回到第 1 天） */
 function restart() {
-  run = createRun(Date.now());
+  run = newRun();
   enterDay();
 }
 
@@ -141,6 +151,27 @@ function refreshDayInfo() {
     line2.style.fontWeight = '600';
   }
   elDayInfo.replaceChildren(line1, line2);
+}
+
+const SIDE_NAME = { west: '西', east: '東', south: '南' } as const;
+
+/** 今晚預告：來襲方向、強度、是否有首領 */
+function buildForecast() {
+  const cfg = forecast(run);
+  const pct = (m: number) => `${Math.round(m * 100)}%`;
+  const l1 = document.createElement('div');
+  l1.textContent = `今晚敵人來自：${cfg.sides.map((s) => SIDE_NAME[s]).join('、')}（畫面紅色區域）`;
+  const l2 = document.createElement('div');
+  l2.textContent = `敵人強度：血量 ${pct(cfg.hpMul)}、攻擊 ${pct(cfg.powerMul)}、速度 ${pct(cfg.speedMul)}`;
+  const parts: HTMLElement[] = [l1, l2];
+  if (cfg.boss) {
+    const l3 = document.createElement('div');
+    l3.className = 'warn';
+    l3.textContent = '⚠ 最後一夜：首領「亡靈領主」將在入夜 15 秒後現身，會破牆。擊殺它就能提前天亮。';
+    parts.push(l3);
+  }
+  elForecast.className = cfg.boss ? 'boss' : '';
+  elForecast.replaceChildren(...parts);
 }
 
 /** 城防面板：列出開著的缺口（可封堵）與現有路障（可拆除），並摘要城牆受損情況 */
@@ -192,6 +223,7 @@ function buildDefensePanel() {
 
 function buildDayPanel() {
   refreshDayInfo();
+  buildForecast();
   buildDefensePanel();
   elJobs.replaceChildren(
     ...run.roster.map((r) => {
@@ -306,7 +338,10 @@ function updateHud() {
   const left = Math.max(0, game.nightLength - game.time);
   elTime.textContent = `第 ${shownNight} / ${run.maxNights} 夜　距離黎明 ${Math.ceil(left)} 秒`;
   elBell.textContent = `鐘樓 ${Math.ceil(game.bellHp)} / ${game.bellMaxHp}`;
-  elKills.textContent = `擊殺 ${game.kills}`;
+  const boss = game.enemies.find((e) => e.kind === 'boss');
+  elKills.textContent = boss
+    ? `擊殺 ${game.kills}　首領 ${Math.ceil(boss.hp)} / ${boss.maxHp}`
+    : `擊殺 ${game.kills}`;
   elRoster.replaceChildren(
     ...game.villagers.map((v, i) => {
       const b = document.createElement('button');
@@ -329,7 +364,9 @@ function updateHud() {
       elResult.textContent = `小鎮在第 ${nightNo} 夜陷落……${lost}擊殺 ${game.kills}。`;
       btnAgain.textContent = '重新開局';
     } else if (run.status === 'won') {
-      elResult.textContent = `第 ${run.maxNights} 夜過去，天亮了！小鎮撐過了全部夜晚。存活 ${run.roster.length} 人。`;
+      elResult.textContent = game.bossSpawned && game.time < game.nightLength
+        ? `亡靈領主倒下了，敵人潰散！小鎮撐過了全部夜晚。存活 ${run.roster.length} 人。`
+        : `第 ${run.maxNights} 夜過去，天亮了！小鎮撐過了全部夜晚。存活 ${run.roster.length} 人。`;
       btnAgain.textContent = '重新開局';
     } else {
       elResult.textContent = `第 ${nightNo} 夜撐過了。${lost}存活 ${run.roster.length} 人，擊殺 ${game.kills}。`;

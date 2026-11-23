@@ -6,6 +6,7 @@ import {
   BUILD_WOOD_COST,
   createRun,
   foodNeeded,
+  forecast,
   HEAL_AMOUNT,
   HUNGER_DAMAGE,
   Job,
@@ -19,7 +20,7 @@ import {
   TRAIN_BONUS,
   TRAIN_BONUS_NO_IRON,
 } from './run';
-import { BARRICADE_HP, BELL_MAX_HP, update, W, WALL_HP } from './sim';
+import { BARRICADE_HP, BELL_MAX_HP, spawnEnemyAt, update, W, WALL_HP } from './sim';
 
 const WEST_GATE = 7 * W + 5;
 const WEST_WALL = 5 * W + 5;
@@ -41,10 +42,10 @@ describe('一局的狀態', () => {
   it('開局從第 1 夜、完整名冊與初始資源開始', () => {
     const run = createRun(1);
     expect(run.night).toBe(1);
-    expect(run.roster).toHaveLength(4);
+    expect(run.roster).toHaveLength(6);
     expect(run.status).toBe('between');
     expect(run.bellHp).toBe(BELL_MAX_HP);
-    expect(Object.keys(run.jobs)).toHaveLength(4);
+    expect(Object.keys(run.jobs)).toHaveLength(6);
   });
 
   it('陣亡的鎮民下一夜不會出現，工作安排也一併清除', () => {
@@ -61,7 +62,7 @@ describe('一局的狀態', () => {
     expect(run.night).toBe(2);
     expect(run.roster.map((r) => r.id)).not.toContain(1);
     expect(run.jobs[1]).toBeUndefined();
-    expect(startNight(run).villagers).toHaveLength(3);
+    expect(startNight(run).villagers).toHaveLength(5);
   });
 
   it('存活者帶著剩餘血量入下一夜，沒有自動回復', () => {
@@ -216,7 +217,9 @@ describe('白天的工作', () => {
       g.spawnTimer = 1000;
       for (const o of g.villagers.slice(1)) o.alive = false; // 只留一位，排除其他人的攻擊
       const v = g.villagers[0];
-      g.enemies.push({ id: 999, x: v.x + 0.5, y: v.y, hp: 1000, maxHp: 1000, cd: 99, ox: 0, oy: 0, alive: true });
+      const foe = spawnEnemyAt(g, v.x + 0.5, v.y);
+      foe.hp = foe.maxHp = 1000;
+      foe.cd = 99; // 敵人不還手，只量測傷害
       update(g, 0.1);
       return 1000 - g.enemies[0].hp;
     };
@@ -260,17 +263,17 @@ describe('糧食與鐵料', () => {
     run.resources.food = 10;
     for (const r of run.roster) r.hp = r.maxHp;
     const report = resolveDay(run);
-    expect(foodNeeded(run)).toBe(4);
-    expect(run.resources.food).toBe(6);
+    expect(foodNeeded(run)).toBe(6);
+    expect(run.resources.food).toBe(4);
     expect(report.join()).toContain('全員吃飽');
     for (const r of run.roster) expect(r.hp).toBe(r.maxHp);
   });
 
   it('糧食不足時，缺幾份就有幾人挨餓，糧食歸零', () => {
     const run = createRun(1);
-    run.resources.food = 1; // 需要 4，缺 3
-    assign(run, { 1: 'train', 2: 'train', 3: 'train', 4: 'train' }); // 不休息，避免回血干擾
-    run.resources.iron = 4;
+    run.resources.food = 3; // 需要 6，缺 3
+    assign(run, { 1: 'train', 2: 'train', 3: 'train', 4: 'train', 5: 'train', 6: 'train' }); // 不休息，避免回血干擾
+    run.resources.iron = 6;
     const before = run.roster.map((r) => r.hp);
     resolveDay(run);
     expect(run.resources.food).toBe(0);
@@ -405,5 +408,27 @@ describe('城防', () => {
     assign(run, { 1: 'build' });
     resolveDay(run);
     expect(run.defense.hp[WEST_GATE]).toBe(10 + BUILD_REPAIR);
+  });
+});
+
+describe('七夜難度', () => {
+  it('預告與實際開戰使用同一份設定', () => {
+    const run = createRun(3);
+    expect(startNight(run).cfg).toEqual(forecast(run));
+  });
+
+  it('預設一局七夜，第七夜才有首領', () => {
+    const run = createRun(3);
+    expect(forecast(run).boss).toBe(false);
+    run.night = 7;
+    expect(forecast(run).boss).toBe(true);
+    expect(startNight(run).cfg.boss).toBe(true);
+  });
+
+  it('夜數增加後，預告的敵人強度跟著提高', () => {
+    const run = createRun(3);
+    const first = forecast(run);
+    run.night = 6;
+    expect(forecast(run).hpMul).toBeGreaterThan(first.hpMul);
   });
 });

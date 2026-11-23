@@ -8,6 +8,35 @@ export const H = 15;
 export type Tile = 0 | 1 | 2 | 3 | 4;
 export type VillagerKind = 'militia' | 'archer' | 'healer';
 export type Phase = 'night' | 'won' | 'lost';
+export type Side = 'west' | 'east' | 'south';
+export type EnemyKind = 'zombie' | 'boss';
+
+/** 每一夜的難度設定。倍率相對於基礎敵人 */
+export interface NightConfig {
+  night: number;
+  maxNights: number;
+  /** 敵人出現的方向 */
+  sides: Side[];
+  hpMul: number;
+  powerMul: number;
+  speedMul: number;
+  /** 出怪間隔倍率，越大出得越慢 */
+  spawnScale: number;
+  /** 是否有首領（擊殺首領即可提前結束這一夜） */
+  boss: boolean;
+}
+
+/** 沒有特別指定時使用：基礎敵人、三個方向、沒有首領 */
+export const NEUTRAL_CONFIG: NightConfig = {
+  night: 1,
+  maxNights: 1,
+  sides: ['west', 'east', 'south'],
+  hpMul: 1,
+  powerMul: 1,
+  speedMul: 1,
+  spawnScale: 1,
+  boss: false,
+};
 
 export interface Point {
   x: number;
@@ -32,8 +61,16 @@ export interface Villager extends Point {
 
 export interface Enemy extends Point {
   id: number;
+  kind: EnemyKind;
   hp: number;
   maxHp: number;
+  power: number;
+  speed: number;
+  range: number;
+  /** 攻擊間隔（秒） */
+  cdMax: number;
+  /** 發現鎮民並轉向追擊的距離 */
+  aggro: number;
   cd: number;
   /** 格內偏移，避免敵人完全重疊 */
   ox: number;
@@ -70,6 +107,8 @@ export interface Game {
   kills: number;
   /** 這一夜被敵人摧毀的城牆與路障數量 */
   breaches: number;
+  cfg: NightConfig;
+  bossSpawned: boolean;
 }
 
 export const BELL: Point = { x: 10, y: 7 };
@@ -84,6 +123,10 @@ export const VILLAGER_STATS: Record<
 };
 
 export const ENEMY_STATS = { hp: 40, power: 6, range: 0.8, cd: 1, speed: 1.1, aggro: 1.6 };
+/** 首領：血量高、移動慢，攻擊力強，會主動破牆 */
+export const BOSS_STATS = { hp: 400, power: 15, range: 1.0, cd: 1.2, speed: 0.9, aggro: 2.2 };
+/** 首領在入夜後幾秒出現 */
+export const BOSS_SPAWN_TIME = 15;
 const GUARD_RADIUS = 2.5;
 
 export const WALL_HP = 120;
@@ -195,6 +238,34 @@ function rebuildFlow(g: Game): void {
   g.flow = buildFlow(g.tiles);
 }
 
+/**
+ * 第 night 夜的難度設定。難度從第 1 夜到最後一夜線性上升；
+ * 前兩夜只有兩個來襲方向（隨機，但同一個種子固定），之後三個方向。
+ * 同一個 seed 與夜數永遠得到相同設定，白天的預告才準確。
+ */
+export function nightConfig(seed: number, night: number, maxNights: number): NightConfig {
+  const t = maxNights <= 1 ? 0 : (night - 1) / (maxNights - 1);
+  const all: Side[] = ['west', 'east', 'south'];
+  let sides = all;
+  if (night <= 2) {
+    // 用種子挑出被排除的方向
+    let h = Math.imul(seed | 0, 2654435761) ^ Math.imul(night, 40503);
+    h = Math.imul(h ^ (h >>> 15), 2246822507) >>> 0;
+    const skip = h % 3;
+    sides = all.filter((_, i) => i !== skip);
+  }
+  return {
+    night,
+    maxNights,
+    sides,
+    hpMul: 0.85 + 0.5 * t,
+    powerMul: 0.85 + 0.4 * t,
+    speedMul: 0.9 + 0.2 * t,
+    spawnScale: 1.4 - 0.6 * t,
+    boss: maxNights > 1 && night >= maxNights,
+  };
+}
+
 /** 一局中跨夜保存的城防：地形與各結構的耐久 */
 export interface Defense {
   tiles: Tile[];
@@ -254,6 +325,8 @@ export const DEFAULT_ROSTER: RosterEntry[] = [
   { id: 2, kind: 'militia', name: '瑪莎', hp: 120, maxHp: 120 },
   { id: 3, kind: 'archer', name: '芬恩', hp: 60, maxHp: 60 },
   { id: 4, kind: 'healer', name: '艾琳', hp: 55, maxHp: 55 },
+  { id: 5, kind: 'militia', name: '布蘭', hp: 120, maxHp: 120 },
+  { id: 6, kind: 'archer', name: '莉娜', hp: 60, maxHp: 60 },
 ];
 
 /** 入夜時各鎮民的起始格子（依名冊順序），名冊超過時從頭循環 */
@@ -291,6 +364,7 @@ export function createGame(
   roster: RosterEntry[] = DEFAULT_ROSTER,
   bellHp: number = BELL_MAX_HP,
   defense: Defense = createDefense(),
+  cfg: NightConfig = NEUTRAL_CONFIG,
 ): Game {
   const tiles = defense.tiles.slice();
   return {
@@ -313,6 +387,8 @@ export function createGame(
     rng: seed | 0,
     kills: 0,
     breaches: 0,
+    cfg,
+    bossSpawned: false,
   };
 }
 
@@ -385,33 +461,45 @@ function nearest<T extends Point & { alive: boolean }>(list: T[], from: Point, m
   return best;
 }
 
-function spawnEnemy(g: Game): void {
-  const side = Math.floor(rand(g) * 3);
-  let tx: number;
-  let ty: number;
-  if (side === 0) {
-    tx = 0;
-    ty = 2 + Math.floor(rand(g) * 11);
-  } else if (side === 1) {
-    tx = W - 1;
-    ty = 2 + Math.floor(rand(g) * 11);
-  } else {
-    tx = 2 + Math.floor(rand(g) * 16);
-    ty = H - 1;
-  }
+/** 在指定位置放一個敵人（測試與出怪共用） */
+export function spawnEnemyAt(g: Game, x: number, y: number, kind: EnemyKind = 'zombie'): Enemy {
+  const base = kind === 'boss' ? BOSS_STATS : ENEMY_STATS;
+  const m = kind === 'boss' ? { hp: 1, power: 1, speed: 1 } : { hp: g.cfg.hpMul, power: g.cfg.powerMul, speed: g.cfg.speedMul };
   const ox = (rand(g) - 0.5) * 0.4;
   const oy = (rand(g) - 0.5) * 0.4;
-  g.enemies.push({
+  const hp = Math.round(base.hp * m.hp);
+  const e: Enemy = {
     id: g.nextId++,
-    x: tx + 0.5 + ox,
-    y: ty + 0.5 + oy,
-    hp: ENEMY_STATS.hp,
-    maxHp: ENEMY_STATS.hp,
+    kind,
+    x: x + ox,
+    y: y + oy,
+    hp,
+    maxHp: hp,
+    power: base.power * m.power,
+    speed: base.speed * m.speed,
+    range: base.range,
+    cdMax: base.cd,
+    aggro: base.aggro,
     cd: 0,
     ox,
     oy,
     alive: true,
-  });
+  };
+  g.enemies.push(e);
+  return e;
+}
+
+/** 從這一夜的來襲方向之一挑一個地圖邊緣的位置 */
+function edgePoint(g: Game): Point {
+  const side = g.cfg.sides[Math.floor(rand(g) * g.cfg.sides.length)];
+  if (side === 'west') return { x: 0.5, y: 2.5 + Math.floor(rand(g) * 11) };
+  if (side === 'east') return { x: W - 0.5, y: 2.5 + Math.floor(rand(g) * 11) };
+  return { x: 2.5 + Math.floor(rand(g) * 16), y: H - 0.5 };
+}
+
+function spawnEnemy(g: Game): void {
+  const p = edgePoint(g);
+  spawnEnemyAt(g, p.x, p.y);
 }
 
 function updateVillager(g: Game, v: Villager, dt: number): void {
@@ -476,15 +564,15 @@ function updateVillager(g: Game, v: Villager, dt: number): void {
 
 function updateEnemy(g: Game, e: Enemy, dt: number): void {
   e.cd = Math.max(0, e.cd - dt);
-  const step = ENEMY_STATS.speed * dt;
+  const step = e.speed * dt;
 
   // 附近有鎮民就優先攻擊鎮民
-  const prey = nearest(g.villagers, e, ENEMY_STATS.aggro);
+  const prey = nearest(g.villagers, e, e.aggro);
   if (prey) {
-    if (dist(e, prey) <= ENEMY_STATS.range) {
+    if (dist(e, prey) <= e.range) {
       if (e.cd === 0) {
-        prey.hp -= ENEMY_STATS.power;
-        e.cd = ENEMY_STATS.cd;
+        prey.hp -= e.power;
+        e.cd = e.cdMax;
         g.effects.push({ kind: 'hit', x1: e.x, y1: e.y, x2: prey.x, y2: prey.y, ttl: 0.15 });
         if (prey.hp <= 0) prey.alive = false;
       }
@@ -498,8 +586,8 @@ function updateEnemy(g: Game, e: Enemy, dt: number): void {
   const ty = Math.floor(e.y);
   if (DIRS.some(([dx, dy]) => inMap(tx + dx, ty + dy) && g.tiles[idx(tx + dx, ty + dy)] === 2)) {
     if (e.cd === 0) {
-      g.bellHp = Math.max(0, g.bellHp - ENEMY_STATS.power);
-      e.cd = ENEMY_STATS.cd;
+      g.bellHp = Math.max(0, g.bellHp - e.power);
+      e.cd = e.cdMax;
       g.effects.push({ kind: 'hit', x1: e.x, y1: e.y, x2: BELL.x + 0.5, y2: BELL.y + 0.5, ttl: 0.15 });
     }
     return;
@@ -538,8 +626,8 @@ function updateEnemy(g: Game, e: Enemy, dt: number): void {
 
 /** 敵人攻擊一格城牆或路障；耐久歸零就變成缺口並重算路線 */
 function attackStructure(g: Game, e: Enemy, i: number): void {
-  e.cd = ENEMY_STATS.cd;
-  g.structHp[i] -= ENEMY_STATS.power;
+  e.cd = e.cdMax;
+  g.structHp[i] -= e.power;
   g.effects.push({ kind: 'hit', x1: e.x, y1: e.y, x2: (i % W) + 0.5, y2: Math.floor(i / W) + 0.5, ttl: 0.15 });
   if (g.structHp[i] <= 0) {
     g.structHp[i] = 0;
@@ -553,11 +641,18 @@ function tick(g: Game, dt: number): void {
   if (g.phase !== 'night') return;
   g.time += dt;
 
-  // 出怪間隔隨夜晚推進，從 3.5 秒縮短到 1.5 秒
+  // 出怪間隔隨夜晚推進，從 3.5 秒縮短到 1.5 秒，再乘上當夜的難度倍率
   g.spawnTimer -= dt;
   if (g.spawnTimer <= 0) {
     spawnEnemy(g);
-    g.spawnTimer += 3.5 - 2 * Math.min(1, g.time / g.nightLength);
+    g.spawnTimer += (3.5 - 2 * Math.min(1, g.time / g.nightLength)) * g.cfg.spawnScale;
+  }
+
+  // 首領戰：固定時間點從來襲方向之一現身
+  if (g.cfg.boss && !g.bossSpawned && g.time >= BOSS_SPAWN_TIME) {
+    g.bossSpawned = true;
+    const p = edgePoint(g);
+    spawnEnemyAt(g, p.x, p.y, 'boss');
   }
 
   for (const v of g.villagers) if (v.alive) updateVillager(g, v, dt);
@@ -568,6 +663,10 @@ function tick(g: Game, dt: number): void {
 
   if (g.bellHp <= 0) g.phase = 'lost';
   else if (g.time >= g.nightLength) g.phase = 'won';
+  else if (g.bossSpawned && !g.enemies.some((e) => e.kind === 'boss')) {
+    // 首領倒下，其餘敵人潰散，提前天亮
+    g.phase = 'won';
+  }
 }
 
 /** 推進遊戲時間。大的 dt 會切成小步，確保加速時結果仍穩定 */

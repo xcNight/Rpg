@@ -2,11 +2,16 @@ import { describe, expect, it } from 'vitest';
 import {
   BARRICADE_HP,
   BELL,
+  BOSS_SPAWN_TIME,
+  BOSS_STATS,
   createDefense,
   createGame,
   findPath,
+  nightConfig,
+  NEUTRAL_CONFIG,
   orderMove,
   passable,
+  spawnEnemyAt,
   tileLabel,
   update,
   W,
@@ -141,5 +146,118 @@ describe('城牆與路障', () => {
   it('城牆環格子有名稱', () => {
     expect(tileLabel(GATES[0])).toBe('西門');
     expect(tileLabel(5 * W + 5)).toBe('西牆第 3 段');
+  });
+});
+
+describe('夜晚難度', () => {
+  it('難度逐夜上升：血量、攻擊、速度提高，出怪間隔縮短', () => {
+    const cfgs = [1, 2, 3, 4, 5, 6, 7].map((n) => nightConfig(1, n, 7));
+    for (let i = 1; i < cfgs.length; i++) {
+      expect(cfgs[i].hpMul).toBeGreaterThan(cfgs[i - 1].hpMul);
+      expect(cfgs[i].powerMul).toBeGreaterThan(cfgs[i - 1].powerMul);
+      expect(cfgs[i].speedMul).toBeGreaterThan(cfgs[i - 1].speedMul);
+      expect(cfgs[i].spawnScale).toBeLessThan(cfgs[i - 1].spawnScale);
+    }
+  });
+
+  it('前兩夜只有兩個來襲方向，之後三個；同一個種子結果固定', () => {
+    for (let seed = 1; seed <= 20; seed++) {
+      expect(nightConfig(seed, 1, 7).sides).toHaveLength(2);
+      expect(nightConfig(seed, 2, 7).sides).toHaveLength(2);
+      for (let n = 3; n <= 7; n++) expect(nightConfig(seed, n, 7).sides).toHaveLength(3);
+    }
+    expect(nightConfig(5, 1, 7)).toEqual(nightConfig(5, 1, 7));
+  });
+
+  it('不同種子會抽到不同的方向組合', () => {
+    const combos = new Set<string>();
+    for (let seed = 1; seed <= 60; seed++) combos.add(nightConfig(seed, 1, 7).sides.join());
+    expect(combos.size).toBeGreaterThan(1);
+  });
+
+  it('只有最後一夜有首領', () => {
+    expect([1, 2, 3, 4, 5, 6, 7].map((n) => nightConfig(1, n, 7).boss)).toEqual([
+      false, false, false, false, false, false, true,
+    ]);
+    expect(nightConfig(1, 1, 1).boss).toBe(false); // 單夜的局不算首領戰
+  });
+
+  it('敵人只從當夜的來襲方向出現', () => {
+    const g = createGame(1, [], 300, undefined, { ...NEUTRAL_CONFIG, sides: ['west'] });
+    g.spawnTimer = 0;
+    update(g, 0.05);
+    expect(g.enemies).toHaveLength(1);
+    expect(g.enemies[0].x).toBeLessThan(1);
+  });
+
+  it('越後面的夜晚，敵人越強', () => {
+    const make = (night: number) => {
+      const g = createGame(1, [], 300, undefined, nightConfig(1, night, 7));
+      return spawnEnemyAt(g, 0.5, 5.5);
+    };
+    const early = make(1);
+    const late = make(6);
+    expect(late.hp).toBeGreaterThan(early.hp);
+    expect(late.power).toBeGreaterThan(early.power);
+    expect(late.speed).toBeGreaterThan(early.speed);
+  });
+});
+
+describe('首領戰', () => {
+  const bossGame = () => {
+    const g = createGame(2, [], 300, undefined, nightConfig(2, 7, 7));
+    g.spawnTimer = 1000; // 排除小怪，只看首領
+    return g;
+  };
+
+  it('首領在固定時間點現身，且不受夜晚倍率影響', () => {
+    const g = bossGame();
+    update(g, BOSS_SPAWN_TIME - 1);
+    expect(g.enemies.some((e) => e.kind === 'boss')).toBe(false);
+    update(g, 2);
+    const boss = g.enemies.find((e) => e.kind === 'boss')!;
+    expect(boss).toBeDefined();
+    expect(boss.maxHp).toBe(BOSS_STATS.hp);
+    expect(boss.power).toBe(BOSS_STATS.power);
+  });
+
+  it('首領存活時，夜晚繼續到天亮', () => {
+    const g = bossGame();
+    update(g, BOSS_SPAWN_TIME + 5);
+    expect(g.phase).toBe('night');
+  });
+
+  it('擊殺首領就提前天亮', () => {
+    const g = bossGame();
+    update(g, BOSS_SPAWN_TIME + 1);
+    g.enemies.find((e) => e.kind === 'boss')!.alive = false;
+    update(g, 0.1);
+    expect(g.phase).toBe('won');
+    expect(g.time).toBeLessThan(g.nightLength);
+  });
+
+  it('首領出現前不會誤判為擊殺', () => {
+    const g = bossGame();
+    update(g, BOSS_SPAWN_TIME - 5);
+    expect(g.phase).toBe('night');
+  });
+
+  it('沒有首領的夜晚，不會因為「沒有首領」而提前結束', () => {
+    const g = createGame(2, [], 300, undefined, nightConfig(2, 3, 7));
+    g.spawnTimer = 1000;
+    update(g, 30);
+    expect(g.phase).toBe('night');
+  });
+
+  it('首領會破牆：被封死的缺口擋不住它太久', () => {
+    const d = createDefense();
+    for (const i of GATES) {
+      d.tiles[i] = 4;
+      d.hp[i] = BARRICADE_HP;
+    }
+    const g = createGame(2, [], 300, d, { ...NEUTRAL_CONFIG, boss: true, sides: ['west'] });
+    g.spawnTimer = 1000;
+    update(g, BOSS_SPAWN_TIME + 45);
+    expect(g.breaches).toBeGreaterThan(0);
   });
 });

@@ -97,6 +97,12 @@
       #day { margin-top: 8px; }
       #dayInfo { font-size: 15px; margin-bottom: 8px; }
       h2.sec { font-size: 15px; margin: 14px 0 6px; }
+      #forecast {
+        margin-bottom: 4px; padding: 8px 10px; border-radius: 8px; font-size: 14px; line-height: 1.6;
+        border: 1px solid var(--btn-border); background: var(--btn);
+      }
+      #forecast.boss { border-color: var(--warn); }
+      #forecast .warn { color: var(--warn); font-weight: 600; }
       .note { color: var(--muted); font-size: 13px; line-height: 1.6; margin: 0 0 8px; }
       #defense { display: grid; gap: 8px; }
       .jobrow button { min-width: 7em; }
@@ -146,6 +152,7 @@
       <div id="log" hidden></div>
       <section id="day" hidden>
         <div id="dayInfo"></div>
+        <div id="forecast"></div>
         <h2 class="sec">工作</h2>
         <div id="jobs"></div>
         <h2 class="sec">城防</h2>
