@@ -164,23 +164,58 @@ function buildFlow(tiles: Tile[]): number[] {
   return flow;
 }
 
-function makeVillager(id: number, kind: VillagerKind, name: string, tx: number, ty: number): Villager {
-  const c = center(tx, ty);
-  const hp = VILLAGER_STATS[kind].hp;
-  return { id, kind, name, x: c.x, y: c.y, hp, maxHp: hp, cd: 0, path: [], anchor: c, alive: true };
+/** 一局中跨夜保存的鎮民資料（不含戰鬥中的位置與冷卻） */
+export interface RosterEntry {
+  id: number;
+  kind: VillagerKind;
+  name: string;
+  hp: number;
+  maxHp: number;
 }
 
-export function createGame(seed = 1): Game {
+export const DEFAULT_ROSTER: RosterEntry[] = [
+  { id: 1, kind: 'militia', name: '葛雷', hp: 120, maxHp: 120 },
+  { id: 2, kind: 'militia', name: '瑪莎', hp: 120, maxHp: 120 },
+  { id: 3, kind: 'archer', name: '芬恩', hp: 60, maxHp: 60 },
+  { id: 4, kind: 'healer', name: '艾琳', hp: 55, maxHp: 55 },
+];
+
+/** 入夜時各鎮民的起始格子（依名冊順序），名冊超過時從頭循環 */
+const START_SLOTS: [number, number][] = [
+  [6, 7],
+  [13, 7],
+  [10, 9],
+  [9, 7],
+  [8, 9],
+  [11, 5],
+];
+
+function makeVillager(r: RosterEntry, tx: number, ty: number): Villager {
+  const c = center(tx, ty);
+  return {
+    id: r.id,
+    kind: r.kind,
+    name: r.name,
+    x: c.x,
+    y: c.y,
+    hp: r.hp,
+    maxHp: r.maxHp,
+    cd: 0,
+    path: [],
+    anchor: c,
+    alive: true,
+  };
+}
+
+export function createGame(seed = 1, roster: RosterEntry[] = DEFAULT_ROSTER): Game {
   const tiles = buildTiles();
   return {
     tiles,
     flow: buildFlow(tiles),
-    villagers: [
-      makeVillager(1, 'militia', '葛雷', 6, 7),
-      makeVillager(2, 'militia', '瑪莎', 13, 7),
-      makeVillager(3, 'archer', '芬恩', 10, 9),
-      makeVillager(4, 'healer', '艾琳', 9, 7),
-    ],
+    villagers: roster.map((r, i) => {
+      const [tx, ty] = START_SLOTS[i % START_SLOTS.length];
+      return makeVillager(r, tx, ty);
+    }),
     enemies: [],
     effects: [],
     bellHp: 300,

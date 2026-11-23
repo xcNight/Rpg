@@ -1,5 +1,6 @@
 // 進入點：負責輸入、遊戲迴圈與介面文字。
-import { createGame, Game, H, orderMove, update, VILLAGER_STATS, W } from './game/sim';
+import { createRun, Run, settleNight, startNight } from './game/run';
+import { Game, H, orderMove, update, VILLAGER_STATS, W } from './game/sim';
 import { render, TILE } from './render';
 
 const canvas = document.getElementById('game') as HTMLCanvasElement;
@@ -14,10 +15,14 @@ const elKills = $('kills');
 const elRoster = $('roster');
 const elOverlay = $('overlay');
 const elResult = $('result');
+const btnAgain = $('again');
 const btnPause = $('pause');
 const btnSpeed = $('speed');
 
-let game: Game = createGame(Date.now());
+let run: Run = createRun(Date.now());
+let game: Game = startNight(run);
+// 這一夜是否已結算進 run（避免重複結算）
+let settled = false;
 // 預設選取第一位鎮民，手機上不用先點一次才能下令
 let selected: number | null = game.villagers[0].id;
 // 點擊目的地的短暫標記，讓觸控時看得出命令有生效
@@ -25,13 +30,30 @@ let marker: { x: number; y: number; ttl: number } | null = null;
 let paused = false;
 let speed = 1;
 
-function restart() {
-  game = createGame(Date.now());
+// 畫面上顯示的夜數：結算後 run.night 已加一，但結果畫面仍屬於剛打完的那一夜
+let shownNight = run.night;
+
+function beginNight() {
+  game = startNight(run);
+  shownNight = run.night;
+  settled = false;
   selected = game.villagers[0].id;
   marker = null;
   paused = false;
   elOverlay.hidden = true;
   syncButtons();
+}
+
+/** 重新開一局（回到第 1 夜） */
+function restart() {
+  run = createRun(Date.now());
+  beginNight();
+}
+
+/** 按下結果畫面的按鈕：局還在進行就接著下一夜，否則重新開局 */
+function onAgain() {
+  if (run.status === 'between') beginNight();
+  else restart();
 }
 
 function syncButtons() {
@@ -98,11 +120,11 @@ btnSpeed.addEventListener('click', () => {
   syncButtons();
 });
 $('restart').addEventListener('click', restart);
-$('again').addEventListener('click', restart);
+$('again').addEventListener('click', onAgain);
 
 function updateHud() {
   const left = Math.max(0, game.nightLength - game.time);
-  elTime.textContent = `距離黎明 ${Math.ceil(left)} 秒`;
+  elTime.textContent = `第 ${shownNight} / ${run.maxNights} 夜　距離黎明 ${Math.ceil(left)} 秒`;
   elBell.textContent = `鐘樓 ${Math.ceil(game.bellHp)} / ${game.bellMaxHp}`;
   elKills.textContent = `擊殺 ${game.kills}`;
   elRoster.replaceChildren(
@@ -115,12 +137,22 @@ function updateHud() {
       return b;
     }),
   );
-  if (game.phase !== 'night' && elOverlay.hidden) {
-    const alive = game.villagers.filter((v) => v.alive).length;
-    elResult.textContent =
-      game.phase === 'won'
-        ? `天亮了！小鎮撐過了這一夜。存活 ${alive} 人，擊殺 ${game.kills}。`
-        : `鐘樓倒下了……小鎮陷落。擊殺 ${game.kills}。`;
+  if (game.phase !== 'night' && !settled) {
+    settled = true;
+    const nightNo = run.night;
+    const died = game.villagers.filter((v) => !v.alive).map((v) => v.name);
+    settleNight(run, game);
+    const lost = died.length > 0 ? `陣亡：${died.join('、')}。` : '無人陣亡。';
+    if (run.status === 'lost') {
+      elResult.textContent = `小鎮在第 ${nightNo} 夜陷落……${lost}擊殺 ${game.kills}。`;
+      btnAgain.textContent = '重新開局';
+    } else if (run.status === 'won') {
+      elResult.textContent = `第 ${run.maxNights} 夜過去，天亮了！小鎮撐過了全部夜晚。存活 ${run.roster.length} 人。`;
+      btnAgain.textContent = '重新開局';
+    } else {
+      elResult.textContent = `第 ${nightNo} 夜撐過了。${lost}存活 ${run.roster.length} 人，擊殺 ${game.kills}。`;
+      btnAgain.textContent = `進入第 ${run.night} 夜`;
+    }
     elOverlay.hidden = false;
   }
 }
