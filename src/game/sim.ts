@@ -1,6 +1,8 @@
 // 《最後一夜》遊戲邏輯：純資料與純函式，不依賴畫面，方便測試。
 // 座標單位為「格」，單位位置是連續值（即時制），地圖本身是格子。
 
+import { Disaster, DISASTER_INFO, RAM_STATS } from './disaster';
+
 export const W = 20;
 export const H = 15;
 
@@ -8,11 +10,13 @@ export const H = 15;
 export type Tile = 0 | 1 | 2 | 3 | 4;
 export type VillagerKind = 'militia' | 'archer' | 'healer';
 export type Phase = 'night' | 'won' | 'lost';
-export type Side = 'west' | 'east' | 'south';
-export type EnemyKind = 'zombie' | 'boss';
+export type Side = 'west' | 'east' | 'south' | 'north';
+/** grunt：該災厄的普通敵人；ram：攻城槌；boss：首領 */
+export type EnemyKind = 'grunt' | 'ram' | 'boss';
 
 /** 每一夜的難度設定。倍率相對於基礎敵人 */
 export interface NightConfig {
+  disaster: Disaster;
   night: number;
   maxNights: number;
   /** 敵人出現的方向 */
@@ -22,12 +26,18 @@ export interface NightConfig {
   speedMul: number;
   /** 出怪間隔倍率，越大出得越慢 */
   spawnScale: number;
+  aggroMul: number;
+  /** 普通敵人對城牆與路障的傷害倍率 */
+  structMul: number;
+  /** 每次出怪是攻城槌的機率 */
+  ramChance: number;
   /** 是否有首領（擊殺首領即可提前結束這一夜） */
   boss: boolean;
 }
 
 /** 沒有特別指定時使用：基礎敵人、三個方向、沒有首領 */
 export const NEUTRAL_CONFIG: NightConfig = {
+  disaster: 'undead',
   night: 1,
   maxNights: 1,
   sides: ['west', 'east', 'south'],
@@ -35,6 +45,9 @@ export const NEUTRAL_CONFIG: NightConfig = {
   powerMul: 1,
   speedMul: 1,
   spawnScale: 1,
+  aggroMul: 1,
+  structMul: 1,
+  ramChance: 0,
   boss: false,
 };
 
@@ -67,6 +80,8 @@ export interface Enemy extends Point {
   power: number;
   speed: number;
   range: number;
+  /** 對城牆與路障的單次傷害 */
+  structPower: number;
   /** 攻擊間隔（秒） */
   cdMax: number;
   /** 發現鎮民並轉向追擊的距離 */
@@ -123,8 +138,6 @@ export const VILLAGER_STATS: Record<
 };
 
 export const ENEMY_STATS = { hp: 40, power: 6, range: 0.8, cd: 1, speed: 1.1, aggro: 1.6 };
-/** 首領：血量高、移動慢，攻擊力強，會主動破牆 */
-export const BOSS_STATS = { hp: 400, power: 15, range: 1.0, cd: 1.2, speed: 0.9, aggro: 2.2 };
 /** 首領在入夜後幾秒出現 */
 export const BOSS_SPAWN_TIME = 15;
 const GUARD_RADIUS = 2.5;
@@ -243,25 +256,37 @@ function rebuildFlow(g: Game): void {
  * 前兩夜只有兩個來襲方向（隨機，但同一個種子固定），之後三個方向。
  * 同一個 seed 與夜數永遠得到相同設定，白天的預告才準確。
  */
-export function nightConfig(seed: number, night: number, maxNights: number): NightConfig {
+export function nightConfig(
+  seed: number,
+  night: number,
+  maxNights: number,
+  disaster: Disaster = 'undead',
+): NightConfig {
   const t = maxNights <= 1 ? 0 : (night - 1) / (maxNights - 1);
-  const all: Side[] = ['west', 'east', 'south'];
-  let sides = all;
+  const d = DISASTER_INFO[disaster];
+  // 狼人群的後段夜晚連北門也會被攻擊；其他災厄只有西、東、南
+  const all: Side[] = d.northSide ? ['west', 'east', 'south', 'north'] : ['west', 'east', 'south'];
+  const sides = all.slice();
   if (night <= 2) {
-    // 用種子挑出被排除的方向
+    // 前兩夜只留兩個方向：用種子決定剔除哪些
     let h = Math.imul(seed | 0, 2654435761) ^ Math.imul(night, 40503);
-    h = Math.imul(h ^ (h >>> 15), 2246822507) >>> 0;
-    const skip = h % 3;
-    sides = all.filter((_, i) => i !== skip);
+    while (sides.length > 2) {
+      h = Math.imul(h ^ (h >>> 15), 2246822507) >>> 0;
+      sides.splice(h % sides.length, 1);
+    }
   }
   return {
+    disaster,
     night,
     maxNights,
     sides,
-    hpMul: 0.85 + 0.5 * t,
-    powerMul: 0.85 + 0.4 * t,
-    speedMul: 0.9 + 0.2 * t,
-    spawnScale: 1.4 - 0.6 * t,
+    hpMul: (0.85 + 0.5 * t) * d.hpMul,
+    powerMul: (0.85 + 0.4 * t) * d.powerMul,
+    speedMul: (0.9 + 0.2 * t) * d.speedMul,
+    spawnScale: (1.4 - 0.6 * t) * d.spawnMul,
+    aggroMul: d.aggroMul,
+    structMul: d.structMul,
+    ramChance: d.ramChance,
     boss: maxNights > 1 && night >= maxNights,
   };
 }
@@ -461,13 +486,34 @@ function nearest<T extends Point & { alive: boolean }>(list: T[], from: Point, m
   return best;
 }
 
-/** 在指定位置放一個敵人（測試與出怪共用） */
-export function spawnEnemyAt(g: Game, x: number, y: number, kind: EnemyKind = 'zombie'): Enemy {
-  const base = kind === 'boss' ? BOSS_STATS : ENEMY_STATS;
-  const m = kind === 'boss' ? { hp: 1, power: 1, speed: 1 } : { hp: g.cfg.hpMul, power: g.cfg.powerMul, speed: g.cfg.speedMul };
+/** 在指定位置放一個敵人（測試與出怪共用）。屬性由當夜的難度設定與災厄決定 */
+export function spawnEnemyAt(g: Game, x: number, y: number, kind: EnemyKind = 'grunt'): Enemy {
+  const cfg = g.cfg;
+  const boss = DISASTER_INFO[cfg.disaster].boss;
+  let hp: number, power: number, speed: number, range: number, cdMax: number, aggro: number, structPower: number;
+  if (kind === 'boss') {
+    ({ hp, power, speed, range, aggro } = boss);
+    cdMax = boss.cd;
+    structPower = boss.power * boss.structMul;
+  } else if (kind === 'ram') {
+    hp = Math.round(RAM_STATS.hp * cfg.hpMul);
+    power = RAM_STATS.power;
+    speed = RAM_STATS.speed * cfg.speedMul;
+    range = RAM_STATS.range;
+    cdMax = RAM_STATS.cd;
+    aggro = RAM_STATS.aggro;
+    structPower = RAM_STATS.structPower * cfg.powerMul;
+  } else {
+    hp = Math.round(ENEMY_STATS.hp * cfg.hpMul);
+    power = ENEMY_STATS.power * cfg.powerMul;
+    speed = ENEMY_STATS.speed * cfg.speedMul;
+    range = ENEMY_STATS.range;
+    cdMax = ENEMY_STATS.cd;
+    aggro = ENEMY_STATS.aggro * cfg.aggroMul;
+    structPower = power * cfg.structMul;
+  }
   const ox = (rand(g) - 0.5) * 0.4;
   const oy = (rand(g) - 0.5) * 0.4;
-  const hp = Math.round(base.hp * m.hp);
   const e: Enemy = {
     id: g.nextId++,
     kind,
@@ -475,11 +521,12 @@ export function spawnEnemyAt(g: Game, x: number, y: number, kind: EnemyKind = 'z
     y: y + oy,
     hp,
     maxHp: hp,
-    power: base.power * m.power,
-    speed: base.speed * m.speed,
-    range: base.range,
-    cdMax: base.cd,
-    aggro: base.aggro,
+    power,
+    speed,
+    range,
+    cdMax,
+    aggro,
+    structPower,
     cd: 0,
     ox,
     oy,
@@ -494,12 +541,15 @@ function edgePoint(g: Game): Point {
   const side = g.cfg.sides[Math.floor(rand(g) * g.cfg.sides.length)];
   if (side === 'west') return { x: 0.5, y: 2.5 + Math.floor(rand(g) * 11) };
   if (side === 'east') return { x: W - 0.5, y: 2.5 + Math.floor(rand(g) * 11) };
+  if (side === 'north') return { x: 3.5 + Math.floor(rand(g) * 13), y: 0.5 };
   return { x: 2.5 + Math.floor(rand(g) * 16), y: H - 0.5 };
 }
 
 function spawnEnemy(g: Game): void {
   const p = edgePoint(g);
-  spawnEnemyAt(g, p.x, p.y);
+  // 只有圍城軍會抽攻城槌；沒有槌子的災厄不消耗亂數，維持原本的出怪序列
+  const ram = g.cfg.ramChance > 0 && rand(g) < g.cfg.ramChance;
+  spawnEnemyAt(g, p.x, p.y, ram ? 'ram' : 'grunt');
 }
 
 function updateVillager(g: Game, v: Villager, dt: number): void {
@@ -627,7 +677,7 @@ function updateEnemy(g: Game, e: Enemy, dt: number): void {
 /** 敵人攻擊一格城牆或路障；耐久歸零就變成缺口並重算路線 */
 function attackStructure(g: Game, e: Enemy, i: number): void {
   e.cd = e.cdMax;
-  g.structHp[i] -= e.power;
+  g.structHp[i] -= e.structPower;
   g.effects.push({ kind: 'hit', x1: e.x, y1: e.y, x2: (i % W) + 0.5, y2: Math.floor(i / W) + 0.5, ttl: 0.15 });
   if (g.structHp[i] <= 0) {
     g.structHp[i] = 0;

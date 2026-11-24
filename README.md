@@ -27,4 +27,7 @@ npm run dev
 | `npm run build` | 型別檢查並建置到 `dist/` |
 | `npm run build:single` | 建置並合併成單一檔案 `dist/single.html` |
 
-測試用：網址加上 `?night=7` 可直接從第 7 夜（首領戰）開始。
+測試用網址參數（使用時不讀也不寫存檔）：
+
+- `?night=7`：直接從第 7 夜（首領戰）開始
+- `?disaster=wolves`：指定災厄（`undead`、`wolves`、`siege`）

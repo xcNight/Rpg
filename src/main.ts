@@ -31,6 +31,7 @@ import {
   WALL_HP,
 } from './game/sim';
 import { render, TILE } from './render';
+import { DISASTER_INFO, DISASTER_LIST } from './game/disaster';
 import { parseRun, serializeRun } from './game/save';
 
 const canvas = document.getElementById('game') as HTMLCanvasElement;
@@ -60,8 +61,8 @@ type Mode = 'day' | 'night';
 
 const SAVE_KEY = 'last-night.save.v1';
 const params = new URLSearchParams(location.search);
-/** 測試用 ?night=N 時不讀也不寫存檔，免得蓋掉真正的進度 */
-const persist = !params.has('night');
+/** 測試用 ?night=N、?disaster=… 時不讀也不寫存檔，免得蓋掉真正的進度 */
+const persist = !params.has('night') && !params.has('disaster');
 
 // localStorage 可能被停用或滿了（私密瀏覽、嵌入頁面等），一律包 try/catch，失敗就當作沒有存檔
 function readSave(): Run | null {
@@ -89,9 +90,14 @@ function clearSave() {
   }
 }
 
-/** 新開一局。測試用：網址加 ?night=7 可直接從指定夜數開始（例如測首領戰） */
+/**
+ * 新開一局。測試用：網址加 ?night=7 可直接從指定夜數開始（例如測首領戰），
+ * ?disaster=wolves（undead／wolves／siege）可指定災厄。
+ */
 function newRun(): Run {
   const r = createRun(Date.now());
+  const d = params.get('disaster');
+  if (DISASTER_LIST.includes(d as never)) r.disaster = d as typeof r.disaster;
   const n = Number(params.get('night'));
   if (Number.isInteger(n) && n >= 1 && n <= r.maxNights) r.night = n;
   return r;
@@ -200,21 +206,25 @@ function refreshDayInfo() {
   elDayInfo.replaceChildren(line1, line2);
 }
 
-const SIDE_NAME = { west: '西', east: '東', south: '南' } as const;
+const SIDE_NAME = { west: '西', east: '東', south: '南', north: '北' } as const;
 
 /** 今晚預告：來襲方向、強度、是否有首領 */
 function buildForecast() {
   const cfg = forecast(run);
+  const info = DISASTER_INFO[cfg.disaster];
   const pct = (m: number) => `${Math.round(m * 100)}%`;
+  const l0 = document.createElement('div');
+  l0.textContent = `本局災厄：${info.label}（${info.enemyName}）。${info.desc}`;
+  l0.style.fontWeight = '600';
   const l1 = document.createElement('div');
   l1.textContent = `今晚敵人來自：${cfg.sides.map((s) => SIDE_NAME[s]).join('、')}（畫面紅色區域）`;
   const l2 = document.createElement('div');
   l2.textContent = `敵人強度：血量 ${pct(cfg.hpMul)}、攻擊 ${pct(cfg.powerMul)}、速度 ${pct(cfg.speedMul)}`;
-  const parts: HTMLElement[] = [l1, l2];
+  const parts: HTMLElement[] = [l0, l1, l2];
   if (cfg.boss) {
     const l3 = document.createElement('div');
     l3.className = 'warn';
-    l3.textContent = '⚠ 最後一夜：首領「亡靈領主」將在入夜 15 秒後現身，會破牆。擊殺它就能提前天亮。';
+    l3.textContent = `⚠ 最後一夜：首領「${info.bossName}」將在入夜 15 秒後現身。擊殺它就能提前天亮。`;
     parts.push(l3);
   }
   elForecast.className = cfg.boss ? 'boss' : '';
@@ -431,7 +441,7 @@ function showEnding(nightNo: number, earlyDawn: boolean) {
   title.className = 'title';
   title.textContent = won
     ? earlyDawn
-      ? '亡靈領主倒下了，敵人潰散！'
+      ? `${DISASTER_INFO[run.disaster].bossName}倒下了，敵人潰散！`
       : '天亮了！小鎮撐過了全部夜晚'
     : `小鎮在第 ${nightNo} 夜陷落……`;
   const survivedNights = won ? run.maxNights : nightNo - 1;

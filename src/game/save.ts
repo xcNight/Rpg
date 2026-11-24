@@ -1,5 +1,6 @@
 // 存檔：把一局（Run）轉成文字，以及讀回時的嚴格驗證。
 // 這裡只處理資料，不碰 localStorage（由 main.ts 負責），方便測試。
+import { DISASTER_LIST } from './disaster';
 import { Job, JOB_ORDER, Run } from './run';
 import { BELL, BELL_MAX_HP, VillagerKind, W, H } from './sim';
 
@@ -31,6 +32,9 @@ export function parseRun(text: string | null): Run | null {
   const r = data.run;
 
   if (!isNum(r.seed)) return null;
+  // 災厄加入前的舊存檔沒有這個欄位，視為亡靈潮；有的話必須是已知的災厄
+  if (r.disaster === undefined) r.disaster = 'undead';
+  if (!DISASTER_LIST.includes(r.disaster as never)) return null;
   if (!isInt(r.maxNights) || r.maxNights < 1 || r.maxNights > 30) return null;
   if (!isInt(r.night) || r.night < 1 || r.night > r.maxNights) return null;
   if (r.status !== 'between') return null;

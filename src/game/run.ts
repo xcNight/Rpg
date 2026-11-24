@@ -1,4 +1,5 @@
 // 一局（Run）：跨越多個夜晚的狀態。夜晚戰鬥由 sim.ts 負責，這裡管名冊、資源與白天的工作結算。
+import { Disaster, disasterFor } from './disaster';
 import {
   BARRICADE_HP,
   BELL_MAX_HP,
@@ -27,6 +28,8 @@ export interface Resources {
 
 export interface Run {
   seed: number;
+  /** 這一局的災厄，開局就決定 */
+  disaster: Disaster;
   /** 目前（或即將進行）的第幾夜，從 1 開始 */
   night: number;
   maxNights: number;
@@ -127,10 +130,11 @@ export function foodNeeded(run: Run): number {
   return run.roster.length * FOOD_PER_PERSON;
 }
 
-export function createRun(seed: number, maxNights = 7): Run {
+export function createRun(seed: number, maxNights = 7, disaster: Disaster = disasterFor(seed)): Run {
   const roster = DEFAULT_ROSTER.map((r) => ({ ...r }));
   return {
     seed,
+    disaster,
     night: 1,
     maxNights,
     roster,
@@ -256,7 +260,7 @@ export function resolveDay(run: Run): string[] {
 
 /** 今晚的難度設定（方向、強度、是否有首領）。白天面板用它做預告，開戰時用的是同一份 */
 export function forecast(run: Run): NightConfig {
-  return nightConfig(run.seed, run.night, run.maxNights);
+  return nightConfig(run.seed, run.night, run.maxNights, run.disaster);
 }
 
 /** 以目前名冊建立當夜的戰鬥。每夜的亂數種子不同，但整局可重現 */

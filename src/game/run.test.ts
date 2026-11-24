@@ -432,3 +432,28 @@ describe('七夜難度', () => {
     expect(forecast(run).hpMul).toBeGreaterThan(first.hpMul);
   });
 });
+
+describe('災厄與一局', () => {
+  it('預設由種子決定災厄，也可以指定', () => {
+    expect(createRun(5).disaster).toBe(createRun(5).disaster);
+    expect(createRun(5, 7, 'wolves').disaster).toBe('wolves');
+  });
+
+  it('預告與開戰的災厄一致', () => {
+    for (const d of ['undead', 'wolves', 'siege'] as const) {
+      const run = createRun(2, 7, d);
+      expect(forecast(run).disaster).toBe(d);
+      expect(startNight(run).cfg.disaster).toBe(d);
+    }
+  });
+
+  it('狼人群的敵人真的比亡靈潮快', () => {
+    const speed = (d: 'undead' | 'wolves') => {
+      const g = startNight(createRun(2, 7, d));
+      g.spawnTimer = 0;
+      update(g, 0.05);
+      return g.enemies[0].speed;
+    };
+    expect(speed('wolves')).toBeGreaterThan(speed('undead'));
+  });
+});

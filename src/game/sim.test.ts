@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import { DISASTER_INFO, DISASTER_LIST, disasterFor } from './disaster';
 import {
   BARRICADE_HP,
   BELL,
   BOSS_SPAWN_TIME,
-  BOSS_STATS,
   createDefense,
   createGame,
   findPath,
@@ -217,8 +217,8 @@ describe('首領戰', () => {
     update(g, 2);
     const boss = g.enemies.find((e) => e.kind === 'boss')!;
     expect(boss).toBeDefined();
-    expect(boss.maxHp).toBe(BOSS_STATS.hp);
-    expect(boss.power).toBe(BOSS_STATS.power);
+    expect(boss.maxHp).toBe(DISASTER_INFO.undead.boss.hp);
+    expect(boss.power).toBe(DISASTER_INFO.undead.boss.power);
   });
 
   it('首領存活時，夜晚繼續到天亮', () => {
@@ -259,5 +259,128 @@ describe('首領戰', () => {
     g.spawnTimer = 1000;
     update(g, BOSS_SPAWN_TIME + 45);
     expect(g.breaches).toBeGreaterThan(0);
+  });
+});
+
+describe('災厄', () => {
+  const sealedAll = () => {
+    const d = createDefense();
+    for (const i of GATES) {
+      d.tiles[i] = 4;
+      d.hp[i] = BARRICADE_HP;
+    }
+    return d;
+  };
+
+  it('由種子決定災厄：可重現，且三種都會出現', () => {
+    expect(disasterFor(7)).toBe(disasterFor(7));
+    const seen = new Set<string>();
+    for (let seed = 1; seed <= 60; seed++) seen.add(disasterFor(seed));
+    expect([...seen].sort()).toEqual([...DISASTER_LIST].sort());
+  });
+
+  it('三種災厄的難度設定各有特色', () => {
+    const u = nightConfig(1, 3, 7, 'undead');
+    const w = nightConfig(1, 3, 7, 'wolves');
+    const s = nightConfig(1, 3, 7, 'siege');
+    expect(w.speedMul).toBeGreaterThan(u.speedMul * 1.4); // 狼人快
+    expect(s.speedMul).toBeLessThan(u.speedMul); // 圍城軍慢
+    expect(u.spawnScale).toBeLessThan(s.spawnScale); // 亡靈潮出怪最頻繁
+    expect(s.ramChance).toBeGreaterThan(0);
+    expect(u.ramChance).toBe(0);
+    expect(w.ramChance).toBe(0);
+    expect(w.structMul).toBeLessThan(1); // 狼人不擅長破牆
+  });
+
+  it('狼人群後段夜晚連北門也會被攻擊，其他災厄不會', () => {
+    expect(nightConfig(1, 3, 7, 'wolves').sides).toHaveLength(4);
+    expect(nightConfig(1, 3, 7, 'wolves').sides).toContain('north');
+    expect(nightConfig(1, 3, 7, 'undead').sides).not.toContain('north');
+    expect(nightConfig(1, 3, 7, 'siege').sides).not.toContain('north');
+    for (let seed = 1; seed <= 20; seed++) expect(nightConfig(seed, 1, 7, 'wolves').sides).toHaveLength(2);
+  });
+
+  it('狼人群真的會從北邊出現', () => {
+    const g = createGame(1, [], 300, undefined, { ...NEUTRAL_CONFIG, sides: ['north'] });
+    g.spawnTimer = 0;
+    update(g, 0.05);
+    expect(g.enemies[0].y).toBeLessThan(1);
+  });
+
+  it('狼人：較快、更容易發現鎮民、對牆傷害較低', () => {
+    const make = (d: 'undead' | 'wolves') => {
+      const g = createGame(1, [], 300, undefined, nightConfig(1, 3, 7, d));
+      return spawnEnemyAt(g, 0.5, 5.5);
+    };
+    const u = make('undead');
+    const w = make('wolves');
+    expect(w.speed).toBeGreaterThan(u.speed);
+    expect(w.aggro).toBeGreaterThan(u.aggro);
+    expect(w.structPower).toBeLessThan(w.power);
+    expect(u.structPower).toBeCloseTo(u.power);
+  });
+
+  it('攻城槌：血厚、對牆傷害極高、完全不理鎮民', () => {
+    const g = createGame(1, [], 300, undefined, nightConfig(1, 3, 7, 'siege'));
+    const grunt = spawnEnemyAt(g, 0.5, 5.5);
+    const ram = spawnEnemyAt(g, 0.5, 6.5, 'ram');
+    expect(ram.hp).toBeGreaterThan(grunt.hp * 2);
+    expect(ram.structPower).toBeGreaterThan(grunt.structPower * 3);
+    expect(ram.aggro).toBe(0);
+    expect(ram.speed).toBeLessThan(grunt.speed);
+  });
+
+  it('只有圍城軍會出攻城槌', () => {
+    const roll = (d: 'undead' | 'wolves' | 'siege') => {
+      const g = createGame(5, [], 300, undefined, nightConfig(5, 3, 7, d));
+      const kinds = new Set<string>();
+      for (let i = 0; i < 60; i++) {
+        g.spawnTimer = 0;
+        update(g, 0.05);
+      }
+      for (const e of g.enemies) kinds.add(e.kind);
+      return kinds;
+    };
+    expect(roll('siege').has('ram')).toBe(true);
+    expect(roll('undead').has('ram')).toBe(false);
+    expect(roll('wolves').has('ram')).toBe(false);
+  });
+
+  it('攻城槌不會攻擊身邊的鎮民', () => {
+    const g = createGame(1, undefined, 300, undefined, nightConfig(1, 3, 7, 'siege'));
+    g.spawnTimer = 1000;
+    const v = g.villagers[0];
+    const before = v.hp;
+    spawnEnemyAt(g, v.x + 0.4, v.y, 'ram');
+    update(g, 3);
+    expect(v.hp).toBe(before);
+  });
+
+  it('攻城槌拆路障比普通敵人快得多', () => {
+    const timeToBreach = (kind: 'grunt' | 'ram') => {
+      const g = createGame(1, [], 300, sealedAll(), nightConfig(1, 3, 7, 'siege'));
+      g.nightLength = 1000;
+      g.spawnTimer = 1000;
+      spawnEnemyAt(g, 4.5, 7.5, kind);
+      for (let t = 0; t < 60; t += 0.1) {
+        update(g, 0.1);
+        if (g.tiles[GATES[0]] === 0) return t;
+      }
+      return Infinity;
+    };
+    expect(timeToBreach('ram')).toBeLessThan(5);
+    expect(timeToBreach('grunt')).toBeGreaterThan(timeToBreach('ram') * 2);
+  });
+
+  it('各災厄的首領屬性不同，並以各自的資料生成', () => {
+    const boss = (d: 'undead' | 'wolves' | 'siege') => {
+      const g = createGame(1, [], 300, undefined, nightConfig(1, 7, 7, d));
+      return spawnEnemyAt(g, 0.5, 5.5, 'boss');
+    };
+    for (const d of DISASTER_LIST) expect(boss(d).maxHp).toBe(DISASTER_INFO[d].boss.hp);
+    expect(boss('wolves').speed).toBeGreaterThan(boss('undead').speed);
+    const siege = boss('siege');
+    expect(siege.structPower).toBeCloseTo(siege.power * 3);
+    expect(boss('wolves').structPower).toBeLessThan(boss('wolves').power);
   });
 });

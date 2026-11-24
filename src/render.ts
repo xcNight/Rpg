@@ -1,4 +1,5 @@
 // 畫面繪製：只讀取遊戲狀態，不修改它。
+import { DISASTER_INFO } from './game/disaster';
 import { BARRICADE_HP, BELL, Game, H, RING, VILLAGER_STATS, W, WALL_HP } from './game/sim';
 
 export const TILE = 40;
@@ -80,12 +81,14 @@ export function render(ctx: CanvasRenderingContext2D, g: Game, selectedId: numbe
       if (side === 'west') ctx.fillRect(0, 2 * TILE, TILE, 11 * TILE);
       if (side === 'east') ctx.fillRect((W - 1) * TILE, 2 * TILE, TILE, 11 * TILE);
       if (side === 'south') ctx.fillRect(2 * TILE, (H - 1) * TILE, 16 * TILE, TILE);
+      if (side === 'north') ctx.fillRect(3 * TILE, 0, 14 * TILE, TILE);
     }
     ctx.fillStyle = '#ffd9d4';
     for (const side of g.cfg.sides) {
       if (side === 'west') ctx.fillText('敵', TILE / 2, 7.5 * TILE);
       if (side === 'east') ctx.fillText('敵', (W - 0.5) * TILE, 7.5 * TILE);
       if (side === 'south') ctx.fillText('敵襲', 10 * TILE, (H - 0.5) * TILE);
+      if (side === 'north') ctx.fillText('敵襲', 10 * TILE, TILE / 2);
     }
   }
 
@@ -124,7 +127,14 @@ export function render(ctx: CanvasRenderingContext2D, g: Game, selectedId: numbe
       bar(ctx, e.x * TILE, e.y * TILE - 26, 36, e.hp / e.maxHp, '#d05bff');
       continue;
     }
-    unit(ctx, e.x * TILE, e.y * TILE, 11, '#b0503f', '屍');
+    if (e.kind === 'ram') {
+      // 攻城槌：較大的木色單位，血條一律顯示
+      unit(ctx, e.x * TILE, e.y * TILE, 15, '#7a5a3c', '槌');
+      bar(ctx, e.x * TILE, e.y * TILE - 22, 30, e.hp / e.maxHp, '#e0a03f');
+      continue;
+    }
+    const look = DISASTER_INFO[g.cfg.disaster];
+    unit(ctx, e.x * TILE, e.y * TILE, 11, look.color, look.glyph);
     if (e.hp < e.maxHp) bar(ctx, e.x * TILE, e.y * TILE - 18, 22, e.hp / e.maxHp, '#e0553f');
   }
 

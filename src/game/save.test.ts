@@ -36,6 +36,17 @@ describe('存檔', () => {
     expect(parseRun(serializeRun(run))).toEqual(run);
   });
 
+  it('災厄會一起存檔與讀回', () => {
+    const run = createRun(42, 7, 'siege');
+    expect(parseRun(serializeRun(run))!.disaster).toBe('siege');
+  });
+
+  it('舊存檔沒有災厄欄位時，視為亡靈潮', () => {
+    const loaded = parseRun(saved((r) => delete r.disaster));
+    expect(loaded).not.toBeNull();
+    expect(loaded!.disaster).toBe('undead');
+  });
+
   it('空值、亂碼、非物件都回傳 null', () => {
     expect(parseRun(null)).toBeNull();
     expect(parseRun('')).toBeNull();
@@ -82,6 +93,7 @@ describe('存檔', () => {
     ['今日路障索引超出範圍', (r) => (r.placedToday = [99999])],
     ['統計為負', (r) => (r.kills = -1)],
     ['陣亡名單格式錯誤', (r) => (r.fallen = [{ name: 1, night: 1 }])],
+    ['災厄不存在', (r) => (r.disaster = 'dragons')],
     ['nightStarted 不是布林', (r) => (r.nightStarted = 'yes')],
     ['夜數上限離譜', (r) => (r.maxNights = 1000)],
   ];
