@@ -1,11 +1,14 @@
 // 存檔：把一局（Run）轉成文字，以及讀回時的嚴格驗證。
 // 這裡只處理資料，不碰 localStorage（由 main.ts 負責），方便測試。
 import { DISASTER_LIST } from './disaster';
+import { Origin, ORIGIN_INFO, ORIGIN_LIST, TRAIT_INFO } from './people';
 import { Job, JOB_ORDER, Run } from './run';
 import { BELL, BELL_MAX_HP, VillagerKind, W, H } from './sim';
 
 const VERSION = 1;
 const KINDS: VillagerKind[] = ['militia', 'archer', 'healer'];
+/** 出身與特質加入前的舊存檔：依職業補上預設出身，特質為平凡 */
+const LEGACY_ORIGIN: Record<VillagerKind, Origin> = { militia: 'guard', archer: 'hunter', healer: 'nun' };
 
 export function serializeRun(run: Run): string {
   return JSON.stringify({ v: VERSION, run });
@@ -48,6 +51,10 @@ export function parseRun(text: string | null): Run | null {
     if (!isObj(m) || !isInt(m.id) || ids.has(m.id)) return null;
     ids.add(m.id);
     if (!KINDS.includes(m.kind as VillagerKind) || typeof m.name !== 'string' || m.name.length > 20) return null;
+    if (m.origin === undefined) m.origin = LEGACY_ORIGIN[m.kind as VillagerKind];
+    if (m.trait === undefined) m.trait = 'none';
+    if (!ORIGIN_LIST.includes(m.origin as Origin) || !ORIGIN_INFO[m.origin as Origin].kinds.includes(m.kind as VillagerKind)) return null;
+    if (typeof m.trait !== 'string' || !(m.trait in TRAIT_INFO)) return null;
     if (!isNum(m.maxHp) || m.maxHp <= 0 || m.maxHp > 1000) return null;
     if (!isNum(m.hp) || m.hp < 1 || m.hp > m.maxHp) return null;
     if (m.powerMul !== undefined && (!isNum(m.powerMul) || m.powerMul < 1 || m.powerMul > 3)) return null;

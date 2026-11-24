@@ -2,6 +2,7 @@
 // 座標單位為「格」，單位位置是連續值（即時制），地圖本身是格子。
 
 import { Disaster, DISASTER_INFO, RAM_STATS } from './disaster';
+import { Origin, Trait, TRAIT_INFO } from './people';
 
 export const W = 20;
 export const H = 15;
@@ -67,8 +68,14 @@ export interface Villager extends Point {
   path: Point[];
   /** 駐守點：民兵追擊後會回到這裡 */
   anchor: Point;
-  /** 戰鬥力倍率（白天訓練的加成），1 為無加成 */
+  /** 戰鬥力倍率（白天訓練與特質的加成），1 為無加成 */
   powerMul: number;
+  trait: Trait;
+  /** 夜晚射程加成（格） */
+  rangeBonus: number;
+  speedMul: number;
+  /** 逃跑剩餘秒數（膽小的鎮民在附近同伴倒下時觸發） */
+  fleeTimer: number;
   alive: boolean;
 }
 
@@ -280,8 +287,8 @@ export function nightConfig(
     night,
     maxNights,
     sides,
-    hpMul: (0.85 + 0.5 * t) * d.hpMul,
-    powerMul: (0.85 + 0.4 * t) * d.powerMul,
+    hpMul: (0.9 + 0.55 * t) * d.hpMul,
+    powerMul: (0.9 + 0.45 * t) * d.powerMul,
     speedMul: (0.9 + 0.2 * t) * d.speedMul,
     spawnScale: (1.4 - 0.6 * t) * d.spawnMul,
     aggroMul: d.aggroMul,
@@ -341,17 +348,19 @@ export interface RosterEntry {
   name: string;
   hp: number;
   maxHp: number;
-  /** 下一夜的戰鬥力倍率，沒有設定視為 1 */
+  origin: Origin;
+  trait: Trait;
+  /** 下一夜的戰鬥力倍率（白天訓練），沒有設定視為 1 */
   powerMul?: number;
 }
 
 export const DEFAULT_ROSTER: RosterEntry[] = [
-  { id: 1, kind: 'militia', name: '葛雷', hp: 120, maxHp: 120 },
-  { id: 2, kind: 'militia', name: '瑪莎', hp: 120, maxHp: 120 },
-  { id: 3, kind: 'archer', name: '芬恩', hp: 60, maxHp: 60 },
-  { id: 4, kind: 'healer', name: '艾琳', hp: 55, maxHp: 55 },
-  { id: 5, kind: 'militia', name: '布蘭', hp: 120, maxHp: 120 },
-  { id: 6, kind: 'archer', name: '莉娜', hp: 60, maxHp: 60 },
+  { id: 1, kind: 'militia', name: '葛雷', hp: 120, maxHp: 120, origin: 'guard', trait: 'none' },
+  { id: 2, kind: 'militia', name: '瑪莎', hp: 120, maxHp: 120, origin: 'guard', trait: 'none' },
+  { id: 3, kind: 'archer', name: '芬恩', hp: 60, maxHp: 60, origin: 'hunter', trait: 'none' },
+  { id: 4, kind: 'healer', name: '艾琳', hp: 55, maxHp: 55, origin: 'nun', trait: 'none' },
+  { id: 5, kind: 'militia', name: '布蘭', hp: 120, maxHp: 120, origin: 'guard', trait: 'none' },
+  { id: 6, kind: 'archer', name: '莉娜', hp: 60, maxHp: 60, origin: 'hunter', trait: 'none' },
 ];
 
 /** 入夜時各鎮民的起始格子（依名冊順序），名冊超過時從頭循環 */
@@ -366,6 +375,7 @@ const START_SLOTS: [number, number][] = [
 
 function makeVillager(r: RosterEntry, tx: number, ty: number): Villager {
   const c = center(tx, ty);
+  const t = TRAIT_INFO[r.trait];
   return {
     id: r.id,
     kind: r.kind,
@@ -377,7 +387,11 @@ function makeVillager(r: RosterEntry, tx: number, ty: number): Villager {
     cd: 0,
     path: [],
     anchor: c,
-    powerMul: r.powerMul ?? 1,
+    powerMul: (r.powerMul ?? 1) * (t.powerMul ?? 1),
+    trait: r.trait,
+    rangeBonus: t.rangeBonus ?? 0,
+    speedMul: t.speedMul ?? 1,
+    fleeTimer: 0,
     alive: true,
   };
 }
@@ -554,13 +568,23 @@ function spawnEnemy(g: Game): void {
 
 function updateVillager(g: Game, v: Villager, dt: number): void {
   const st = VILLAGER_STATS[v.kind];
+  const speed = st.speed * v.speedMul;
+  const range = st.range + v.rangeBonus;
   v.cd = Math.max(0, v.cd - dt);
+
+  // 膽小的鎮民目睹同伴倒下後，會先逃回鐘樓邊，這段時間不戰鬥
+  if (v.fleeTimer > 0) {
+    v.fleeTimer = Math.max(0, v.fleeTimer - dt);
+    v.path = [];
+    stepToward(g, v, { x: BELL.x + 0.5, y: BELL.y + 1.5 }, speed * dt);
+    return;
+  }
 
   // 移動：有命令就照路徑走；民兵閒置時會追擊駐守範圍內的敵人
   if (v.path.length > 0) {
     const next = v.path[0];
     const d = dist(v, next);
-    const s = st.speed * dt;
+    const s = speed * dt;
     if (d <= s) {
       v.x = next.x;
       v.y = next.y;
@@ -572,9 +596,9 @@ function updateVillager(g: Game, v: Villager, dt: number): void {
   } else if (v.kind === 'militia') {
     const foe = nearest(g.enemies, v.anchor, GUARD_RADIUS);
     if (foe) {
-      if (dist(v, foe) > st.range * 0.8) stepToward(g, v, foe, st.speed * dt);
+      if (dist(v, foe) > range * 0.8) stepToward(g, v, foe, speed * dt);
     } else {
-      stepToward(g, v, v.anchor, st.speed * dt);
+      stepToward(g, v, v.anchor, speed * dt);
     }
   }
 
@@ -583,7 +607,7 @@ function updateVillager(g: Game, v: Villager, dt: number): void {
     // 治療範圍內血量比例最低的受傷同伴
     let target: Villager | null = null;
     for (const u of g.villagers) {
-      if (!u.alive || u.hp >= u.maxHp || dist(u, v) > st.range) continue;
+      if (!u.alive || u.hp >= u.maxHp || dist(u, v) > range) continue;
       if (!target || u.hp / u.maxHp < target.hp / target.maxHp) target = u;
     }
     if (target) {
@@ -593,7 +617,7 @@ function updateVillager(g: Game, v: Villager, dt: number): void {
     }
     return;
   }
-  const foe = nearest(g.enemies, v, st.range);
+  const foe = nearest(g.enemies, v, range);
   if (foe) {
     foe.hp -= st.power * v.powerMul;
     v.cd = st.cd;
@@ -612,6 +636,16 @@ function updateVillager(g: Game, v: Villager, dt: number): void {
   }
 }
 
+/** 鎮民陣亡。附近膽小的同伴會被嚇得逃跑一小段時間 */
+const FLEE_TIME = 6;
+const FLEE_TRIGGER_RADIUS = 4;
+function killVillager(g: Game, v: Villager): void {
+  v.alive = false;
+  for (const u of g.villagers) {
+    if (u.alive && TRAIT_INFO[u.trait].timid && dist(u, v) <= FLEE_TRIGGER_RADIUS) u.fleeTimer = FLEE_TIME;
+  }
+}
+
 function updateEnemy(g: Game, e: Enemy, dt: number): void {
   e.cd = Math.max(0, e.cd - dt);
   const step = e.speed * dt;
@@ -624,7 +658,7 @@ function updateEnemy(g: Game, e: Enemy, dt: number): void {
         prey.hp -= e.power;
         e.cd = e.cdMax;
         g.effects.push({ kind: 'hit', x1: e.x, y1: e.y, x2: prey.x, y2: prey.y, ttl: 0.15 });
-        if (prey.hp <= 0) prey.alive = false;
+        if (prey.hp <= 0) killVillager(g, prey);
       }
       return;
     }

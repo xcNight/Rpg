@@ -109,7 +109,7 @@ export function render(ctx: CanvasRenderingContext2D, g: Game, selectedId: numbe
     ctx.strokeStyle = '#fff5';
     ctx.setLineDash([6, 6]);
     ctx.beginPath();
-    ctx.arc(sel.x * TILE, sel.y * TILE, VILLAGER_STATS[sel.kind].range * TILE, 0, Math.PI * 2);
+    ctx.arc(sel.x * TILE, sel.y * TILE, (VILLAGER_STATS[sel.kind].range + sel.rangeBonus) * TILE, 0, Math.PI * 2);
     ctx.stroke();
     if (sel.path.length > 0) {
       ctx.beginPath();
@@ -153,6 +153,13 @@ export function render(ctx: CanvasRenderingContext2D, g: Game, selectedId: numbe
     }
     unit(ctx, x, y, 14, VILLAGER_COLOR[v.kind], VILLAGER_GLYPH[v.kind]);
     bar(ctx, x, y - 22, 28, v.hp / v.maxHp, '#6fdc6f');
+    if (v.fleeTimer > 0) {
+      // 膽小的鎮民被嚇到逃跑中
+      ctx.fillStyle = '#ffdd55';
+      ctx.font = 'bold 18px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('!', x + 16, y - 14);
+    }
   }
 
   // 攻擊與治療特效

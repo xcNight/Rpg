@@ -32,6 +32,7 @@ import {
 } from './game/sim';
 import { render, TILE } from './render';
 import { DISASTER_INFO, DISASTER_LIST } from './game/disaster';
+import { ORIGIN_INFO, TRAIT_INFO } from './game/people';
 import { parseRun, serializeRun } from './game/save';
 
 const canvas = document.getElementById('game') as HTMLCanvasElement;
@@ -289,6 +290,17 @@ function buildDayPanel() {
       row.className = 'jobrow';
       const label = document.createElement('span');
       label.textContent = `${VILLAGER_STATS[r.kind].label} ${r.name}　血量 ${r.hp}/${r.maxHp}`;
+      // 出身與特質：白天的分配依據
+      const o = ORIGIN_INFO[r.origin];
+      const t = TRAIT_INFO[r.trait];
+      const sub = document.createElement('small');
+      sub.className = 'sub';
+      sub.append(`${o.label}（${o.skill}）・`);
+      const tr = document.createElement('span');
+      tr.textContent = `${t.label}：${t.desc}`;
+      if (r.trait !== 'none') tr.className = t.good ? 'good' : 'bad';
+      sub.append(tr);
+      label.append(sub);
       const sel = document.createElement('select');
       sel.setAttribute('aria-label', `${r.name} 的工作`);
       for (const job of JOB_ORDER) {

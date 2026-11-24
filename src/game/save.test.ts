@@ -2,10 +2,16 @@ import { describe, expect, it } from 'vitest';
 import { createRun, placeBarricade, resolveDay, Run, settleNight, startNight } from './run';
 import { parseRun, serializeRun } from './save';
 import { update, W } from './sim';
+import { DEFAULT_ROSTER } from './sim';
+import type { Disaster } from './disaster';
+
+/** 固定名冊（沒有特質）的一局，讓下列測試的數字不受隨機鎮民影響 */
+const plainRun = (seed: number, maxNights?: number, disaster?: Disaster) =>
+  createRun(seed, maxNights, disaster, DEFAULT_ROSTER.map((r) => ({ ...r })));
 
 /** 取一份完整、合法的存檔文字，並提供修改後再序列化的方法 */
 function saved(mutate?: (r: any) => void): string {
-  const run = createRun(42);
+  const run = plainRun(42);
   run.resources.wood = 10;
   placeBarricade(run, 7 * W + 5);
   const obj = JSON.parse(serializeRun(run));
@@ -15,7 +21,7 @@ function saved(mutate?: (r: any) => void): string {
 
 describe('存檔', () => {
   it('存檔後讀回，內容完全相同', () => {
-    const run = createRun(42);
+    const run = plainRun(42);
     run.resources.wood = 10;
     placeBarricade(run, 7 * W + 5);
     run.jobs[1] = 'scavenge';
@@ -25,7 +31,7 @@ describe('存檔', () => {
   });
 
   it('讀回的存檔可以繼續玩下去：開戰、結算、進入隔天', () => {
-    const run = parseRun(serializeRun(createRun(7)))!;
+    const run = parseRun(serializeRun(plainRun(7)))!;
     resolveDay(run);
     const g = startNight(run);
     g.nightLength = 5;
@@ -37,7 +43,7 @@ describe('存檔', () => {
   });
 
   it('災厄會一起存檔與讀回', () => {
-    const run = createRun(42, 7, 'siege');
+    const run = plainRun(42, 7, 'siege');
     expect(parseRun(serializeRun(run))!.disaster).toBe('siege');
   });
 
@@ -119,7 +125,7 @@ describe('整局統計', () => {
   };
 
   it('累計擊殺與城防被破壞的數量', () => {
-    const run = createRun(1);
+    const run = plainRun(1);
     const g1 = nightOf(run, (g) => {
       g.kills = 10;
       g.breaches = 2;
@@ -135,7 +141,7 @@ describe('整局統計', () => {
   });
 
   it('記錄陣亡者與陣亡的夜晚', () => {
-    const run = createRun(1);
+    const run = plainRun(1);
     const g1 = nightOf(run, (g) => (g.villagers.find((v) => v.id === 2)!.alive = false));
     settleNight(run, g1);
     const g2 = nightOf(run, (g) => (g.villagers.find((v) => v.id === 3)!.alive = false));
@@ -147,7 +153,7 @@ describe('整局統計', () => {
   });
 
   it('結算後 nightStarted 一律歸零，避免讀檔時重打已結算的夜晚', () => {
-    const run = createRun(1);
+    const run = plainRun(1);
     run.nightStarted = true;
     settleNight(run, nightOf(run));
     expect(run.nightStarted).toBe(false);

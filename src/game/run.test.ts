@@ -7,6 +7,7 @@ import {
   createRun,
   foodNeeded,
   forecast,
+  GUARD_TRAIN_EXTRA,
   HEAL_AMOUNT,
   HUNGER_DAMAGE,
   Job,
@@ -21,6 +22,12 @@ import {
   TRAIN_BONUS_NO_IRON,
 } from './run';
 import { BARRICADE_HP, BELL_MAX_HP, spawnEnemyAt, update, W, WALL_HP } from './sim';
+import { DEFAULT_ROSTER } from './sim';
+import type { Disaster } from './disaster';
+
+/** 固定名冊（沒有特質）的一局，讓下列測試的數字不受隨機鎮民影響 */
+const plainRun = (seed: number, maxNights?: number, disaster?: Disaster) =>
+  createRun(seed, maxNights, disaster, DEFAULT_ROSTER.map((r) => ({ ...r })));
 
 const WEST_GATE = 7 * W + 5;
 const WEST_WALL = 5 * W + 5;
@@ -40,7 +47,7 @@ function quietNight(run: Run) {
 
 describe('一局的狀態', () => {
   it('開局從第 1 夜、完整名冊與初始資源開始', () => {
-    const run = createRun(1);
+    const run = plainRun(1);
     expect(run.night).toBe(1);
     expect(run.roster).toHaveLength(6);
     expect(run.status).toBe('between');
@@ -49,7 +56,7 @@ describe('一局的狀態', () => {
   });
 
   it('陣亡的鎮民下一夜不會出現，工作安排也一併清除', () => {
-    const run = createRun(1);
+    const run = plainRun(1);
     const g = quietNight(run);
     const victim = g.villagers.find((v) => v.id === 1)!;
     victim.alive = false;
@@ -66,7 +73,7 @@ describe('一局的狀態', () => {
   });
 
   it('存活者帶著剩餘血量入下一夜，沒有自動回復', () => {
-    const run = createRun(1);
+    const run = plainRun(1);
     const g = quietNight(run);
     g.villagers.find((v) => v.id === 3)!.hp = 20;
     g.villagers.find((v) => v.id === 4)!.alive = false; // 移除醫者，避免戰鬥中被治療
@@ -76,7 +83,7 @@ describe('一局的狀態', () => {
   });
 
   it('鐘樓受損會帶到下一夜', () => {
-    const run = createRun(1);
+    const run = plainRun(1);
     const g = quietNight(run);
     g.bellHp = 123;
     update(g, 6);
@@ -86,7 +93,7 @@ describe('一局的狀態', () => {
   });
 
   it('鐘樓倒塌時整局結束', () => {
-    const run = createRun(1);
+    const run = plainRun(1);
     const g = startNight(run);
     g.bellHp = 0;
     update(g, 0.1);
@@ -96,7 +103,7 @@ describe('一局的狀態', () => {
   });
 
   it('全員陣亡時整局結束', () => {
-    const run = createRun(1);
+    const run = plainRun(1);
     const g = startNight(run);
     for (const v of g.villagers) v.alive = false;
     g.phase = 'won'; // 即使夜晚撐到天亮，沒有人也算失敗
@@ -105,7 +112,7 @@ describe('一局的狀態', () => {
   });
 
   it('撐過最後一夜即通關，不再增加夜數', () => {
-    const run = createRun(1, 2);
+    const run = plainRun(1, 2);
     for (let i = 0; i < 2; i++) {
       const g = quietNight(run);
       update(g, 6);
@@ -116,13 +123,13 @@ describe('一局的狀態', () => {
   });
 
   it('夜晚未結束時不能結算', () => {
-    const run = createRun(1);
+    const run = plainRun(1);
     expect(() => settleNight(run, startNight(run))).toThrow();
   });
 
   it('同一個種子的整局可重現', () => {
     const play = () => {
-      const run = createRun(5);
+      const run = plainRun(5);
       const g = startNight(run);
       update(g, g.nightLength + 1);
       return g;
@@ -137,7 +144,7 @@ describe('一局的狀態', () => {
 describe('白天的工作', () => {
   it('搜刮會增加資源，且同一種子結果相同', () => {
     const make = () => {
-      const run = createRun(9);
+      const run = plainRun(9);
       assign(run, { 1: 'scavenge', 2: 'scavenge' });
       return run;
     };
@@ -150,14 +157,14 @@ describe('白天的工作', () => {
     expect(a.resources).toEqual(b.resources);
     expect(a.resources.wood).toBeGreaterThan(before.wood);
     // 對照組：沒人搜刮，只扣晚餐
-    const control = createRun(9);
+    const control = plainRun(9);
     control.resources.food = 100;
     resolveDay(control);
     expect(a.resources.food).toBeGreaterThan(control.resources.food);
   });
 
   it('搜刮有機會受傷，但血量不會低於 1', () => {
-    const run = createRun(3);
+    const run = plainRun(3);
     for (const r of run.roster) r.hp = 1;
     assign(run, { 1: 'scavenge', 2: 'scavenge', 3: 'scavenge', 4: 'scavenge' });
     resolveDay(run);
@@ -165,7 +172,7 @@ describe('白天的工作', () => {
   });
 
   it('修築消耗木石並修復鐘樓，不超過上限', () => {
-    const run = createRun(1);
+    const run = plainRun(1);
     run.bellHp = 100;
     run.resources.wood = 10;
     assign(run, { 1: 'build', 2: 'build' });
@@ -181,7 +188,7 @@ describe('白天的工作', () => {
   });
 
   it('木石不足或鐘樓完好時，修築不會消耗資源', () => {
-    const run = createRun(1);
+    const run = plainRun(1);
     run.bellHp = 100;
     run.resources.wood = 1;
     assign(run, { 1: 'build' });
@@ -196,12 +203,12 @@ describe('白天的工作', () => {
   });
 
   it('訓練讓當夜戰鬥力提高，隔夜清除', () => {
-    const run = createRun(1);
+    const run = plainRun(1);
     run.resources.iron = 1;
     assign(run, { 1: 'train' });
     resolveDay(run);
     const g = quietNight(run);
-    expect(g.villagers.find((v) => v.id === 1)!.powerMul).toBe(TRAIN_BONUS);
+    expect(g.villagers.find((v) => v.id === 1)!.powerMul).toBeCloseTo(TRAIN_BONUS + GUARD_TRAIN_EXTRA); // 預設鎮民 1 是衛兵
     expect(g.villagers.find((v) => v.id === 2)!.powerMul).toBe(1);
 
     update(g, 6);
@@ -211,7 +218,7 @@ describe('白天的工作', () => {
 
   it('訓練後的民兵一擊的傷害確實更高', () => {
     const strike = (mul: number) => {
-      const run = createRun(1);
+      const run = plainRun(1);
       run.roster[0].powerMul = mul;
       const g = startNight(run);
       g.spawnTimer = 1000;
@@ -227,18 +234,19 @@ describe('白天的工作', () => {
   });
 
   it('治療會補最需要的「其他」鎮民，不補自己', () => {
-    const run = createRun(1);
-    run.roster[0].hp = 100; // 葛雷 100/120
-    run.roster[2].hp = 10; // 芬恩 10/60，比例最低
+    const run = plainRun(1);
+    run.roster[0].hp = 20; // 葛雷 20/120，比例最低
+    run.roster[2].hp = 50; // 芬恩 50/60
     assign(run, { 1: 'train', 2: 'train', 3: 'train', 4: 'heal' }); // 艾琳治療，其他人不休息
     run.roster[3].hp = 20; // 艾琳自己也受傷，但不能治療自己
     resolveDay(run);
-    expect(run.roster[2].hp).toBe(10 + HEAL_AMOUNT);
+    expect(run.roster[0].hp).toBe(20 + HEAL_AMOUNT * 1.5); // 艾琳是修女，治療量 ×1.5
+    expect(run.roster[2].hp).toBe(50);
     expect(run.roster[3].hp).toBe(20);
   });
 
   it('休息回復自身血量，不超過上限', () => {
-    const run = createRun(1);
+    const run = plainRun(1);
     run.roster[0].hp = 10; // 葛雷 10/120
     run.roster[2].hp = 50; // 芬恩 50/60
     resolveDay(run); // 預設全員休息
@@ -247,7 +255,7 @@ describe('白天的工作', () => {
   });
 
   it('搜刮的木石當天就能拿來修築', () => {
-    const run = createRun(1);
+    const run = plainRun(1);
     run.resources.wood = 0;
     run.bellHp = 100;
     assign(run, { 1: 'scavenge', 2: 'scavenge', 3: 'scavenge', 4: 'build' });
@@ -259,7 +267,7 @@ describe('白天的工作', () => {
 
 describe('糧食與鐵料', () => {
   it('晚餐每人消耗 1 糧食，吃飽不扣血', () => {
-    const run = createRun(1);
+    const run = plainRun(1);
     run.resources.food = 10;
     for (const r of run.roster) r.hp = r.maxHp;
     const report = resolveDay(run);
@@ -270,7 +278,7 @@ describe('糧食與鐵料', () => {
   });
 
   it('糧食不足時，缺幾份就有幾人挨餓，糧食歸零', () => {
-    const run = createRun(1);
+    const run = plainRun(1);
     run.resources.food = 3; // 需要 6，缺 3
     assign(run, { 1: 'train', 2: 'train', 3: 'train', 4: 'train', 5: 'train', 6: 'train' }); // 不休息，避免回血干擾
     run.resources.iron = 6;
@@ -283,7 +291,7 @@ describe('糧食與鐵料', () => {
   });
 
   it('挨餓不會讓人餓死，血量最低留 1', () => {
-    const run = createRun(1);
+    const run = plainRun(1);
     run.resources.food = 0;
     for (const r of run.roster) r.hp = 5;
     assign(run, { 1: 'train', 2: 'train', 3: 'train', 4: 'train' });
@@ -293,7 +301,7 @@ describe('糧食與鐵料', () => {
 
   it('挨餓的人選擇可重現', () => {
     const play = () => {
-      const run = createRun(4);
+      const run = plainRun(4);
       run.resources.food = 0;
       assign(run, { 1: 'train', 2: 'train', 3: 'train', 4: 'train' });
       return resolveDay(run).join();
@@ -302,25 +310,26 @@ describe('糧食與鐵料', () => {
   });
 
   it('訓練耗 1 鐵料；沒有鐵料時加成較小', () => {
-    const run = createRun(1);
+    const run = plainRun(1);
     run.resources.iron = 1;
     assign(run, { 1: 'train', 2: 'train' });
     resolveDay(run);
     expect(run.resources.iron).toBe(0);
-    expect(run.roster[0].powerMul).toBe(TRAIN_BONUS);
-    expect(run.roster[1].powerMul).toBe(TRAIN_BONUS_NO_IRON);
+    // 預設的民兵都是衛兵出身，訓練加成各多 0.1
+    expect(run.roster[0].powerMul).toBeCloseTo(TRAIN_BONUS + GUARD_TRAIN_EXTRA);
+    expect(run.roster[1].powerMul).toBeCloseTo(TRAIN_BONUS_NO_IRON + GUARD_TRAIN_EXTRA);
   });
 });
 
 describe('城防', () => {
   it('開局有四個缺口、沒有路障', () => {
-    const run = createRun(1);
+    const run = plainRun(1);
     expect(openGaps(run)).toHaveLength(4);
     expect(barricades(run)).toHaveLength(0);
   });
 
   it('在缺口放路障：耗木石、記為今天放的；牆上或木石不足時不能放', () => {
-    const run = createRun(1);
+    const run = plainRun(1);
     run.resources.wood = 10;
     expect(placeBarricade(run, WEST_GATE)).toBe(true);
     expect(run.resources.wood).toBe(10 - BARRICADE_WOOD_COST);
@@ -333,7 +342,7 @@ describe('城防', () => {
   });
 
   it('拆除：當天剛放的退還木石，過夜後再拆不退', () => {
-    const run = createRun(1);
+    const run = plainRun(1);
     run.resources.wood = 10;
     placeBarricade(run, WEST_GATE);
     expect(removeBarricade(run, WEST_GATE)).toBe(true);
@@ -349,14 +358,14 @@ describe('城防', () => {
   });
 
   it('城防會用在夜晚戰鬥裡', () => {
-    const run = createRun(1);
+    const run = plainRun(1);
     run.resources.wood = 10;
     placeBarricade(run, WEST_GATE);
     expect(startNight(run).tiles[WEST_GATE]).toBe(4);
   });
 
   it('受損與被摧毀的結構會跨夜保留', () => {
-    const run = createRun(1);
+    const run = plainRun(1);
     const g = quietNight(run);
     g.structHp[WEST_WALL] = 50;
     const brokenWall = 6 * W + 5;
@@ -371,7 +380,7 @@ describe('城防', () => {
   });
 
   it('修築優先修血量比例最低的結構', () => {
-    const run = createRun(1);
+    const run = plainRun(1);
     run.resources.wood = 10;
     run.defense.hp[WEST_WALL] = 20; // 17%
     run.bellHp = 250; // 83%
@@ -383,7 +392,7 @@ describe('城防', () => {
   });
 
   it('鐘樓比例更低時先修鐘樓；修好後不超過上限', () => {
-    const run = createRun(1);
+    const run = plainRun(1);
     run.resources.wood = 10;
     run.defense.hp[WEST_WALL] = 100;
     run.bellHp = 30;
@@ -392,7 +401,7 @@ describe('城防', () => {
     expect(run.bellHp).toBe(30 + BUILD_REPAIR);
     expect(run.defense.hp[WEST_WALL]).toBe(100);
 
-    const run2 = createRun(1);
+    const run2 = plainRun(1);
     run2.resources.wood = 10;
     run2.defense.hp[WEST_WALL] = WALL_HP - 5;
     assign(run2, { 1: 'build' });
@@ -401,7 +410,7 @@ describe('城防', () => {
   });
 
   it('路障也能被修築修復', () => {
-    const run = createRun(1);
+    const run = plainRun(1);
     run.resources.wood = 10;
     placeBarricade(run, WEST_GATE);
     run.defense.hp[WEST_GATE] = 10;
@@ -413,12 +422,12 @@ describe('城防', () => {
 
 describe('七夜難度', () => {
   it('預告與實際開戰使用同一份設定', () => {
-    const run = createRun(3);
+    const run = plainRun(3);
     expect(startNight(run).cfg).toEqual(forecast(run));
   });
 
   it('預設一局七夜，第七夜才有首領', () => {
-    const run = createRun(3);
+    const run = plainRun(3);
     expect(forecast(run).boss).toBe(false);
     run.night = 7;
     expect(forecast(run).boss).toBe(true);
@@ -426,7 +435,7 @@ describe('七夜難度', () => {
   });
 
   it('夜數增加後，預告的敵人強度跟著提高', () => {
-    const run = createRun(3);
+    const run = plainRun(3);
     const first = forecast(run);
     run.night = 6;
     expect(forecast(run).hpMul).toBeGreaterThan(first.hpMul);
@@ -435,13 +444,13 @@ describe('七夜難度', () => {
 
 describe('災厄與一局', () => {
   it('預設由種子決定災厄，也可以指定', () => {
-    expect(createRun(5).disaster).toBe(createRun(5).disaster);
-    expect(createRun(5, 7, 'wolves').disaster).toBe('wolves');
+    expect(plainRun(5).disaster).toBe(plainRun(5).disaster);
+    expect(plainRun(5, 7, 'wolves').disaster).toBe('wolves');
   });
 
   it('預告與開戰的災厄一致', () => {
     for (const d of ['undead', 'wolves', 'siege'] as const) {
-      const run = createRun(2, 7, d);
+      const run = plainRun(2, 7, d);
       expect(forecast(run).disaster).toBe(d);
       expect(startNight(run).cfg.disaster).toBe(d);
     }
@@ -449,7 +458,7 @@ describe('災厄與一局', () => {
 
   it('狼人群的敵人真的比亡靈潮快', () => {
     const speed = (d: 'undead' | 'wolves') => {
-      const g = startNight(createRun(2, 7, d));
+      const g = startNight(plainRun(2, 7, d));
       g.spawnTimer = 0;
       update(g, 0.05);
       return g.enemies[0].speed;

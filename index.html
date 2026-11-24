@@ -20,6 +20,7 @@
         --veil: rgba(20, 22, 28, 0.82);
         --veil-fg: #f2efe8;
         --warn: #b3261e;
+        --good: #1f7a3a;
       }
       @media (prefers-color-scheme: dark) {
         :root:not([data-theme='light']) {
@@ -31,10 +32,12 @@
           --btn-border: #454b5c;
           --sel: #3d4458;
           --warn: #ff8a80;
+          --good: #7fd99a;
         }
       }
       :root[data-theme='dark'] {
         --warn: #ff8a80;
+        --good: #7fd99a;
         --bg: #14161c;
         --fg: #e8e6df;
         --muted: #a9a79f;
@@ -109,6 +112,9 @@
       .note { color: var(--muted); font-size: 13px; line-height: 1.6; margin: 0 0 8px; }
       #defense { display: grid; gap: 8px; }
       .jobrow button { min-width: 7em; }
+      .jobrow .sub { display: block; margin-top: 2px; font-size: 12px; line-height: 1.5; color: var(--muted); }
+      .jobrow .sub .good { color: var(--good); font-weight: 600; }
+      .jobrow .sub .bad { color: var(--warn); font-weight: 600; }
       #jobs { display: grid; gap: 8px; }
       .jobrow {
         display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 8px;
